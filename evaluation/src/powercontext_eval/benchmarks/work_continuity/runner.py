@@ -1,0 +1,438 @@
+# Copyright (c) 2026 OceanBase.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Orchestration for one work-continuity run.
+
+A run has two halves that stay separable. Assembly is always available and needs
+no host: it renders each method's continuation context and measures injected
+bytes. Scoring needs recorded attempts, and when none are supplied the run
+reports assembly only instead of inventing an outcome.
+
+Neither half calls a model, a server, or a provider. A run therefore reproduces
+byte for byte from the lock file alone, and the recorded attempts are the only
+input that carries what a host observed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+
+from powercontext_eval.benchmarks.work_continuity.analysis import (
+    ArmOutcome,
+    TaskAnalysis,
+    WorkContinuityAnalysis,
+    analyse_task_outcomes,
+    analyse_work_continuity,
+)
+from powercontext_eval.benchmarks.work_continuity.arms import (
+    DEFAULT_ASSEMBLY_MAX_BYTES,
+    ContinuationArm,
+    arm_manifest_record,
+    resolve_continuation_arms,
+)
+from powercontext_eval.benchmarks.work_continuity.assembly import ContinuationContext, assemble_context
+from powercontext_eval.benchmarks.work_continuity.attempts import AttemptSet, load_attempts
+from powercontext_eval.benchmarks.work_continuity.catalog import ContinuationTask, TaskCatalog
+from powercontext_eval.benchmarks.work_continuity.rubric import AttemptScore, score_attempt
+from powercontext_eval.errors import PowerContextEvalError
+
+ASSEMBLY_ONLY_CLASSIFICATION = "assembly-only-no-recorded-attempts"
+RECORDED_CLASSIFICATION = "recorded-attempts-not-a-complete-benchmark-result"
+CONTINUATION_WORKLOAD = "work-continuity"
+RUN_MANIFEST_SCHEMA = "powercontext.work-continuity-run-manifest.v1"
+
+
+class WorkContinuityRunError(PowerContextEvalError):
+    """A work-continuity run cannot satisfy its own contract."""
+
+
+@dataclass(frozen=True)
+class WorkContinuityRun:
+    """Everything one work-continuity run measured, before it is rendered."""
+
+    workload: str
+    run_id: str
+    task_set_id: str
+    classification: str
+    max_bytes: int
+    hosts: tuple[str, ...]
+    tasks: tuple[ContinuationTask, ...]
+    contexts: tuple[ContinuationContext, ...]
+    scores: tuple[AttemptScore, ...]
+    analysis: WorkContinuityAnalysis | None
+    manifest: Mapping[str, object]
+
+    def context(self, task_id: str, arm_id: str) -> ContinuationContext:
+        for context in self.contexts:
+            if context.task_id == task_id and context.arm_id == arm_id:
+                return context
+        raise WorkContinuityRunError(f"no assembled context for task {task_id} arm {arm_id}")
+
+    def task(self, task_id: str) -> ContinuationTask:
+        for task in self.tasks:
+            if task.task_id == task_id:
+                return task
+        raise WorkContinuityRunError(f"no selected task {task_id}")
+
+
+def run_work_continuity(
+    *,
+    task_lock: Path,
+    run_id: str,
+    max_bytes: int = DEFAULT_ASSEMBLY_MAX_BYTES,
+    arm_ids: tuple[str, ...] | None = None,
+    task_ids: Sequence[str] | None = None,
+    attempts_path: Path | None = None,
+    powercontext_revision: str | None = None,
+    integration_revision: str | None = None,
+) -> WorkContinuityRun:
+    """Assemble every selected arm and, when supplied, score every recorded attempt."""
+
+    if max_bytes < 1:
+        raise WorkContinuityRunError("Work-continuity assembly budget must be positive")
+    catalog = TaskCatalog.load(task_lock)
+    arms = resolve_continuation_arms(arm_ids)
+    tasks = catalog.select(task_ids)
+    attempts = load_attempts(attempts_path, catalog=catalog) if attempts_path is not None else None
+    _require_attempts_cover_selection(tasks, arms, attempts)
+
+    contexts = tuple(assemble_context(task, arm, max_bytes=max_bytes) for task in tasks for arm in arms)
+    scores: list[AttemptScore] = []
+    analysis: WorkContinuityAnalysis | None = None
+    hosts: tuple[str, ...] = ()
+    if attempts is not None:
+        hosts = attempts.hosts
+        by_key = {(context.task_id, context.arm_id): context for context in contexts}
+        task_analyses: list[TaskAnalysis] = []
+        for task in tasks:
+            task_outcomes: list[ArmOutcome] = []
+            for arm in arms:
+                context = by_key[(task.task_id, arm.arm_id)]
+                for host in hosts:
+                    matching = tuple(
+                        attempt
+                        for attempt in attempts.for_task_and_arm(task.task_id, arm.arm_id)
+                        if attempt.host == host
+                    )
+                    score = score_attempt(task, context, matching[0]) if matching else None
+                    if score is not None:
+                        scores.append(score)
+                    task_outcomes.append(
+                        ArmOutcome(
+                            task_id=task.task_id,
+                            arm_id=arm.arm_id,
+                            host=host,
+                            context=context,
+                            score=score,
+                        )
+                    )
+            task_analyses.append(analyse_task_outcomes(task, task_outcomes))
+        analysis = analyse_work_continuity(task_analyses)
+
+    manifest = _manifest(
+        catalog=catalog,
+        tasks=tasks,
+        arms=arms,
+        max_bytes=max_bytes,
+        run_id=run_id,
+        attempts=attempts,
+        powercontext_revision=powercontext_revision,
+        integration_revision=integration_revision,
+    )
+    return WorkContinuityRun(
+        workload=CONTINUATION_WORKLOAD,
+        run_id=run_id,
+        task_set_id=catalog.task_set_id,
+        classification=ASSEMBLY_ONLY_CLASSIFICATION if attempts is None else RECORDED_CLASSIFICATION,
+        max_bytes=max_bytes,
+        hosts=hosts,
+        tasks=tuple(tasks),
+        contexts=contexts,
+        scores=tuple(scores),
+        analysis=analysis,
+        manifest=manifest,
+    )
+
+
+def write_run_artifacts(run: WorkContinuityRun, output_dir: Path) -> RunArtifacts:
+    """Write one run directory, refusing to overwrite an existing one."""
+
+    target = output_dir.resolve()
+    if target.exists():
+        raise WorkContinuityRunError(f"Work-continuity output directory already exists: {target}")
+    target.mkdir(parents=True)
+    manifest_path = target / "run-manifest.json"
+    assembly_path = target / "assembly.jsonl"
+    scores_path = target / "scores.jsonl"
+    summary_path = target / "run-summary.json"
+    _write_json(manifest_path, run.manifest)
+    _write_jsonl(assembly_path, (_assembly_row(context) for context in run.contexts))
+    _write_jsonl(scores_path, (_score_row(score) for score in run.scores))
+    _write_json(summary_path, run_summary(run))
+    return RunArtifacts(
+        output_dir=target,
+        manifest_path=manifest_path,
+        assembly_path=assembly_path,
+        scores_path=scores_path,
+        summary_path=summary_path,
+    )
+
+
+@dataclass(frozen=True)
+class RunArtifacts:
+    """Paths written for one work-continuity run."""
+
+    output_dir: Path
+    manifest_path: Path
+    assembly_path: Path
+    scores_path: Path
+    summary_path: Path
+
+
+def run_summary(run: WorkContinuityRun) -> dict[str, object]:
+    """Aggregate one run per method, keeping outcome and injected bytes apart."""
+
+    arm_ids = tuple(dict.fromkeys(context.arm_id for context in run.contexts))
+    by_arm: list[dict[str, object]] = []
+    for arm_id in arm_ids:
+        contexts = tuple(context for context in run.contexts if context.arm_id == arm_id)
+        scores = tuple(score for score in run.scores if score.arm_id == arm_id)
+        by_arm.append(
+            {
+                "arm_id": arm_id,
+                "method": contexts[0].method,
+                "task_count": len(contexts),
+                "injected_bytes": {
+                    "total": sum(context.injected_bytes for context in contexts),
+                    "mean": round(sum(context.injected_bytes for context in contexts) / len(contexts), 1),
+                    "max": max(context.injected_bytes for context in contexts),
+                    "truncated_task_count": sum(1 for context in contexts if context.truncated),
+                },
+                "outcome": {
+                    "recorded_attempts": len(scores),
+                    "task_success": sum(1 for score in scores if score.task_success),
+                    "incorrect_assumptions": sum(score.incorrect_assumptions for score in scores),
+                    "missing_evidence": sum(score.missing_evidence for score in scores),
+                    "unverifiable_claims": sum(score.unverifiable_claims for score in scores),
+                    "user_correction_burden": sum(score.user_correction_burden for score in scores),
+                    "mean_time_to_recover_state": _mean_recovery(scores),
+                },
+                "context_quality": _quality_block(contexts),
+            }
+        )
+    summary: dict[str, object] = {
+        "workload": run.workload,
+        "run_id": run.run_id,
+        "task_set_id": run.task_set_id,
+        "classification": run.classification,
+        "assembly_max_bytes": run.max_bytes,
+        "hosts": list(run.hosts),
+        "arms": by_arm,
+    }
+    if run.analysis is not None:
+        summary["failure_analysis"] = {
+            "underperforming_task_ids": list(run.analysis.underperforming_task_ids),
+            "findings_by_class": run.analysis.findings_by_class,
+            "unrecorded_keys": [list(key) for key in run.analysis.unrecorded_keys],
+        }
+    return summary
+
+
+def _require_attempts_cover_selection(
+    tasks: Sequence[ContinuationTask],
+    arms: Sequence[ContinuationArm],
+    attempts: AttemptSet | None,
+) -> None:
+    """Reject an attempt set that names a task or arm the run did not select.
+
+    Silently ignoring an extra recording would let a run look complete while a
+    recorded method never appears in its comparison.
+    """
+
+    if attempts is None:
+        return
+    task_ids = {task.task_id for task in tasks}
+    arm_ids = {arm.arm_id for arm in arms}
+    for attempt in attempts.attempts:
+        if attempt.task_id not in task_ids:
+            raise WorkContinuityRunError(f"attempts name task {attempt.task_id} but the run selects {sorted(task_ids)}")
+        if attempt.arm_id not in arm_ids:
+            raise WorkContinuityRunError(f"attempts name arm {attempt.arm_id} but the run selects {sorted(arm_ids)}")
+
+
+def _manifest(
+    *,
+    catalog: TaskCatalog,
+    tasks: Sequence[ContinuationTask],
+    arms: Sequence[ContinuationArm],
+    max_bytes: int,
+    run_id: str,
+    attempts: AttemptSet | None,
+    powercontext_revision: str | None,
+    integration_revision: str | None,
+) -> dict[str, object]:
+    return {
+        "schema": RUN_MANIFEST_SCHEMA,
+        "workload": CONTINUATION_WORKLOAD,
+        "run_id": run_id,
+        "task_set_id": catalog.task_set_id,
+        "task_ids": [task.task_id for task in tasks],
+        "task_evidence_digest": _task_evidence_digest(tasks),
+        "inputs": {
+            "task_lock": {
+                "path": catalog.path.name,
+                "content_sha256": catalog.content_sha256,
+            },
+            "attempts": (
+                None if attempts is None else {"path": attempts.path.name, "content_sha256": attempts.content_sha256}
+            ),
+        },
+        "assembly": {"max_bytes": max_bytes},
+        "experiment_arm": arm_manifest_record(arms[0], max_bytes=max_bytes),
+        "comparable_arms": [arm_manifest_record(arm, max_bytes=max_bytes) for arm in arms],
+        "revisions": {
+            "powercontext": powercontext_revision,
+            "integration": integration_revision,
+        },
+        "hosts": list(attempts.hosts) if attempts is not None else [],
+    }
+
+
+def _task_evidence_digest(tasks: Sequence[ContinuationTask]) -> str:
+    """Hash the selected ground truth so a run names exactly what it scored against."""
+
+    payload = json.dumps(
+        [
+            {
+                "task_id": task.task_id,
+                "expected_action": task.expected_next_action.action_id,
+                "required_fact_ids": list(task.expected_next_action.required_fact_ids),
+                "obsolete_fact_ids": list(task.obsolete_fact_ids),
+                "unavailable_fact_ids": list(task.unavailable_fact_ids),
+            }
+            for task in tasks
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _assembly_row(context: ContinuationContext) -> dict[str, object]:
+    return {
+        "task_id": context.task_id,
+        "arm_id": context.arm_id,
+        "method": context.method,
+        "max_bytes": context.max_bytes,
+        "injected_bytes": context.injected_bytes,
+        "line_count": context.line_count,
+        "truncated": context.truncated,
+        "delivered_item_count": len(context.delivered_item_ids),
+        "dropped_item_ids": list(context.dropped_item_ids),
+        "delivered_turn_numbers": list(context.delivered_turn_numbers),
+        "delivered_fact_ids": list(context.delivered_fact_ids),
+        "unavailable_fact_ids": list(context.unavailable_fact_ids),
+        "delivered_superseded_turns": list(context.delivered_superseded_turns),
+        "carries_next_action": context.carries_next_action,
+        "content_sha256": hashlib.sha256(context.text.encode("utf-8")).hexdigest(),
+        "quality": None
+        if context.quality is None
+        else {
+            "satisfied": context.quality.satisfied,
+            "violations_by_requirement": context.quality.violations_by_requirement,
+            "violations": [
+                {
+                    "requirement": finding.requirement,
+                    "field": finding.field,
+                    "detail": finding.detail,
+                }
+                for finding in context.quality.violations
+            ],
+            "advisories": [
+                {
+                    "requirement": finding.requirement,
+                    "field": finding.field,
+                    "detail": finding.detail,
+                }
+                for finding in context.quality.advisories
+            ],
+        },
+    }
+
+
+def _score_row(score: AttemptScore) -> dict[str, object]:
+    return {
+        "task_id": score.task_id,
+        "arm_id": score.arm_id,
+        "host": score.host,
+        "task_success": score.task_success,
+        "time_to_recover_state": score.time_to_recover_state,
+        "incorrect_assumptions": score.incorrect_assumptions,
+        "missing_evidence": score.missing_evidence,
+        "unverifiable_claims": score.unverifiable_claims,
+        "user_correction_burden": score.user_correction_burden,
+        "injected_bytes": score.injected_bytes,
+        "assembly_max_bytes": score.max_bytes,
+        "context_truncated": score.context_truncated,
+        "context_assembly_gap": score.has_assembly_gap,
+        "facts_missing_from_context": list(score.facts_missing_from_context),
+        "steps": [
+            {
+                "step": scored.step,
+                "relied_on": list(scored.relied_on),
+                "superseded_reliance": list(scored.superseded_reliance),
+                "undelivered_reliance": list(scored.undelivered_reliance),
+                "unavailable_reliance": list(scored.unavailable_reliance),
+                "correction": scored.correction,
+                "is_recovery": scored.is_recovery,
+            }
+            for scored in score.steps
+        ],
+    }
+
+
+def _quality_block(contexts: Sequence[ContinuationContext]) -> dict[str, object]:
+    checked = [context.quality for context in contexts if context.quality is not None]
+    if not checked:
+        return {"checked_task_count": 0, "satisfied_task_count": 0, "violations_by_requirement": {}}
+    counts: dict[str, int] = {}
+    for report in checked:
+        for requirement, count in report.violations_by_requirement.items():
+            counts[requirement] = counts.get(requirement, 0) + count
+    return {
+        "checked_task_count": len(checked),
+        "satisfied_task_count": sum(1 for report in checked if report.satisfied),
+        "violations_by_requirement": counts,
+    }
+
+
+def _mean_recovery(scores: Sequence[AttemptScore]) -> float | None:
+    recovered = [score.time_to_recover_state for score in scores if score.time_to_recover_state is not None]
+    if not recovered:
+        return None
+    return round(sum(recovered) / len(recovered), 2)
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _write_jsonl(path: Path, rows: Iterable[Mapping[str, object]]) -> None:
+    with path.open("w", encoding="utf-8") as sink:
+        for row in rows:
+            sink.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")

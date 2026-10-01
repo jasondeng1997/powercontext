@@ -1,0 +1,1296 @@
+{
+  "schema": "powercontext.work-continuity-attempts.v1",
+  "attempts": [
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from an earlier plan that the session had already replaced.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5",
+            "wc-0001-f6",
+            "wc-0001-o1"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0001-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0001-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5",
+            "wc-0001-f6"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2",
+            "wc-0002-f3"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": true
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2",
+            "wc-0002-f3"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3",
+            "wc-0003-f4"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0003-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0003-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3",
+            "wc-0003-f4",
+            "wc-0003-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from an earlier plan that the session had already replaced.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4",
+            "wc-0004-f5",
+            "wc-0004-o1"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0004-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0004-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Confirmed the checkpoint state against its evidence pointers.",
+          "relied_on": [
+            "wc-0004-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4",
+            "wc-0004-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4",
+            "wc-0005-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0005-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0005-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Confirmed the checkpoint state against its evidence pointers.",
+          "relied_on": [
+            "wc-0005-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4",
+            "wc-0005-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from an earlier plan that the session had already replaced.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4",
+            "wc-0006-f5",
+            "wc-0006-o1"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0006-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0006-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-a",
+      "host_revision": "synthetic-fixture-a@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4",
+            "wc-0006-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5",
+            "wc-0001-f6"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0001-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0001-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0001",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0001-f2",
+            "wc-0001-f3",
+            "wc-0001-f5",
+            "wc-0001-f6"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from an earlier plan that the session had already replaced.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2",
+            "wc-0002-f3",
+            "wc-0002-o1"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0002",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Confirmed the checkpoint state against its evidence pointers.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Confirmed the checkpoint state against its evidence pointers.",
+          "relied_on": [
+            "wc-0002-f1"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0002-f1",
+            "wc-0002-f2",
+            "wc-0002-f3"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from an earlier plan that the session had already replaced.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3",
+            "wc-0003-f4",
+            "wc-0003-o1"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0003-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0003-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0003",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0003-f1",
+            "wc-0003-f2",
+            "wc-0003-f3",
+            "wc-0003-f4"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4",
+            "wc-0004-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0004-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0004-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0004",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0004-f1",
+            "wc-0004-f4",
+            "wc-0004-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4",
+            "wc-0005-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0005-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0005-f2"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-doc-0005",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Applied the checkpoint next action with the cited evidence.",
+          "relied_on": [
+            "wc-0005-f2",
+            "wc-0005-f3",
+            "wc-0005-f4",
+            "wc-0005-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "full-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Scanned the transcript for the most recent decision.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Continued from the transcript with the cited state.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4",
+            "wc-0006-f5"
+          ]
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "compacted-transcript-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0006-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "informal-summary-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Summarised what the continuation context appeared to say.",
+          "relied_on": [
+            "wc-0006-f1"
+          ]
+        },
+        {
+          "step": 2,
+          "action_text": "Started a general refactor without the missing state.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Asked which change was intended.",
+          "relied_on": [],
+          "correction": false
+        }
+      ]
+    },
+    {
+      "task_id": "wc-coding-0006",
+      "arm_id": "rollover-handoff-v1",
+      "host": "synthetic-fixture-b",
+      "host_revision": "synthetic-fixture-b@fixture-1",
+      "model": "declared-in-fixture-only",
+      "steps": [
+        {
+          "step": 1,
+          "action_text": "Restated the objective before reading any state.",
+          "relied_on": []
+        },
+        {
+          "step": 2,
+          "action_text": "Opened the named module and described the current behaviour.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        },
+        {
+          "step": 3,
+          "action_text": "Proposed a plan that restates the constraint without naming the concrete change.",
+          "relied_on": [
+            "wc-0006-f1",
+            "wc-0006-f3",
+            "wc-0006-f4"
+          ]
+        }
+      ]
+    }
+  ]
+}
