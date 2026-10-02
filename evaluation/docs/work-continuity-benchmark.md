@@ -45,9 +45,13 @@ of any method, and injected bytes measure the method instead of the allowance.
 `ensure_comparable_work_continuity_runs` rejects a comparison whose task set digest, task
 selection, byte ceiling, PowerContext/integration revisions, or recorded execution
 configuration differ. The host *name* is deliberately not part of that check: a host is a
-declared dimension of this evaluation, and the arm is exactly the intended difference. The
-model and host revision that produced the recordings are part of it, because comparing arms
-recorded under different models would measure the models rather than the methods.
+declared dimension of this evaluation, and the arm is exactly the intended difference. What is
+part of it is the model and host revision that produced the recordings, **and how the
+recordings were allocated between them**: a run that put model A on one host and model B on
+nine is not comparable to one that reversed that split, because the mix alone moves the success
+counts while both runs list the same two models. A manifest whose execution configuration
+cannot show its allocation — a missing block, a missing attempt count, a non-positive count —
+is refused rather than assumed equal.
 
 ## Task set and ground truth
 
@@ -96,6 +100,11 @@ delivered: scoring the same attempts under `--max-bytes 1` is refused, because t
 the one-byte context does not match the digest the recording was taken under. A host that
 reports two model or host-revision configurations is rejected before scoring.
 
+`powercontext-eval work-continuity validate` applies the same bindings, using the ceiling the
+recording itself declares, so the documented preflight refuses what `run` refuses: an artifact
+that pins another task set, another task lock, or a context digest this project cannot assemble
+fails validation instead of passing a check that only looked at the file's shape.
+
 Recovery also requires the step to have *done* the work. A step counts as recovered only when
 it performed the task's declared next action — naming the facts an action depends on is
 reading, not continuing, and continuing from a superseded plan is not continuing the declared
@@ -138,7 +147,14 @@ a ceiling that emptied a context cannot certify the requirements it never carrie
 Comparisons are scoped per host *and* per execution configuration. A baseline recorded on one
 host can never "beat" the treatment recorded on another, because that comparison would
 describe two different integrations rather than two continuation methods; and two runs whose
-hosts report different models or host revisions are refused outright.
+hosts report different models, host revisions, or configuration allocations are refused
+outright.
+
+Recording coverage and comparison coverage are separate states. A run can record every selected
+task and method and still hold no comparison at all: the treatment may not be selected, may
+have no recording, or may never have been recorded on the same host as a baseline. The report
+names which of those absences it found instead of printing that the treatment did not rank
+below a baseline on a comparison that never happened.
 
 ## Running it
 
@@ -161,11 +177,15 @@ uv run --project evaluation powercontext-eval work-continuity run \
 assembly only, and every `injected_bytes` number is still produced. An assembly-only run
 reports recording coverage and comparison as *unavailable* rather than as clean — it never
 prints that every task has a recorded attempt, and it never claims the treatment did not rank
-below a baseline, because neither was measured.
+below a baseline, because neither was measured. `run-summary.json` also carries a `comparison`
+block (`treatment_selected`, `treatment_recorded`, `baselines_recorded`, `compared_host_count`,
+`compared_hosts`), which is what lets a reader tell a run that held a comparison from one that
+only held recordings.
 
 `--arm` and `--task-id` narrow a run for focused work. A narrowed run still refuses an
 attempt artifact that names a task or arm it did not select, so a partial run cannot be
-mistaken for a complete one.
+mistaken for a complete one. Narrowing to a baseline arm alone records no treatment, and the
+report says so rather than implying a comparison took place.
 
 ## What the fixture run shows
 

@@ -40,7 +40,10 @@ from powercontext_eval.benchmarks.work_continuity.analysis import (
     analyse_work_continuity,
 )
 from powercontext_eval.benchmarks.work_continuity.arms import (
+    BASELINE_ARM_IDS,
+    CONTINUATION_ARMS,
     DEFAULT_ASSEMBLY_MAX_BYTES,
+    TREATMENT_ARM_ID,
     ContinuationArm,
     arm_manifest_record,
     resolve_continuation_arms,
@@ -247,6 +250,7 @@ def run_summary(run: WorkContinuityRun) -> dict[str, object]:
         "assembly_max_bytes": run.max_bytes,
         "hosts": list(run.hosts),
         "execution_configuration": run.manifest.get("execution_configuration", []),
+        "comparison": _comparison_block(run),
         "arms": by_arm,
     }
     if run.analysis is not None:
@@ -256,6 +260,41 @@ def run_summary(run: WorkContinuityRun) -> dict[str, object]:
             "unrecorded_keys": [list(key) for key in run.analysis.unrecorded_keys],
         }
     return summary
+
+
+def _comparison_block(run: WorkContinuityRun) -> dict[str, object]:
+    """State whether this run held a baseline/treatment pair at all.
+
+    Recording coverage and comparison coverage are different questions. A run can
+    have a recorded attempt for every selected task and method and still hold no
+    comparison: the treatment may not be selected, may have no recording, or may
+    never have been recorded on the same host as a baseline — and comparisons
+    here are scoped per host. Reporting "the treatment did not rank below a
+    baseline" for such a run describes a measurement that never happened.
+    """
+
+    selected = tuple(dict.fromkeys(context.arm_id for context in run.contexts))
+    baselines = tuple(arm_id for arm_id in selected if arm_id in BASELINE_ARM_IDS)
+    recorded = {score.arm_id for score in run.scores}
+    by_host: dict[str, set[str]] = {}
+    for score in run.scores:
+        by_host.setdefault(score.host, set()).add(score.arm_id)
+    compared_hosts = tuple(
+        sorted(
+            host
+            for host, arm_ids in by_host.items()
+            if TREATMENT_ARM_ID in arm_ids and any(baseline in arm_ids for baseline in baselines)
+        )
+    )
+    return {
+        "treatment_arm_id": TREATMENT_ARM_ID,
+        "treatment_selected": TREATMENT_ARM_ID in selected,
+        "treatment_recorded": TREATMENT_ARM_ID in recorded,
+        "baselines_selected": list(baselines),
+        "baselines_recorded": [baseline for baseline in baselines if baseline in recorded],
+        "compared_host_count": len(compared_hosts),
+        "compared_hosts": list(compared_hosts),
+    }
 
 
 def _require_attempts_cover_selection(
@@ -392,18 +431,48 @@ def execution_configuration(attempts: AttemptSet | None) -> list[dict[str, objec
 
     The configuration is retained rather than only used for validation, so a
     reader can see which model and host revision produced the outcomes and can
-    tell a method difference from a configuration difference.
+    tell a method difference from a configuration difference. Each entry also
+    carries how many recordings that host contributed, because the comparison
+    gate has to weigh a configuration by its share of the outcomes and not only
+    notice that it appears somewhere.
     """
 
     if attempts is None:
         return []
     by_host: dict[str, tuple[str, str]] = {}
+    counts: dict[str, int] = {}
     for attempt in attempts.attempts:
         by_host.setdefault(attempt.host, attempt.configuration)
+        counts[attempt.host] = counts.get(attempt.host, 0) + 1
     return [
-        {"host": host, "host_revision": configuration[0], "model": configuration[1]}
+        {
+            "host": host,
+            "host_revision": configuration[0],
+            "model": configuration[1],
+            "attempt_count": counts[host],
+        }
         for host, configuration in sorted(by_host.items())
     ]
+
+
+def require_recording_bindings(*, catalog: TaskCatalog, attempts: AttemptSet) -> None:
+    """Check a recording against the contexts its own declared protocol produces.
+
+    ``run`` applies the same checks to the contexts it assembles for its own
+    selection. This is the ceiling-independent form, used by the preflight: a
+    recording that pins another task set, another task lock, or a context digest
+    this project cannot assemble is rejected here too, so the documented
+    validation step catches what the run would refuse.
+    """
+
+    max_bytes = attempts.protocol.assembly_max_bytes
+    _require_attempts_match_protocol(attempts, catalog=catalog, max_bytes=max_bytes)
+    contexts = tuple(
+        assemble_context(catalog.require(task_id), arm, max_bytes=max_bytes)
+        for task_id in catalog.task_ids
+        for arm in CONTINUATION_ARMS
+    )
+    _require_attempts_match_contexts(attempts, contexts)
 
 
 def _task_evidence_digest(tasks: Sequence[ContinuationTask]) -> str:

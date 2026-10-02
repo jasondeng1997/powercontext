@@ -96,6 +96,7 @@ from powercontext_eval.benchmarks.work_continuity.report import (
 from powercontext_eval.benchmarks.work_continuity.runner import (
     WorkContinuityRunError,
     execution_configuration,
+    require_recording_bindings,
     run_summary,
     run_work_continuity,
     write_run_artifacts,
@@ -668,9 +669,14 @@ def work_continuity_validate(
     try:
         catalog = TaskCatalog.load(task_lock)
         recorded = load_attempts(attempts, catalog=catalog) if attempts is not None else None
+        if recorded is not None:
+            # The documented preflight has to reject what `run` would reject:
+            # a recording bound to another task lock or another context is not
+            # scoreable, and finding that out here is the point of the command.
+            require_recording_bindings(catalog=catalog, attempts=recorded)
     except (WorkContinuityInputError, AttemptInputError) as error:
         raise typer.BadParameter(str(error)) from None
-    except WorkContinuityCatalogError as error:
+    except (WorkContinuityCatalogError, WorkContinuityRunError) as error:
         typer.echo(f"Work-continuity validation failed: {error}", err=True)
         raise typer.Exit(code=1) from None
     typer.echo(

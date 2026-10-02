@@ -87,6 +87,7 @@ def report_payload(run: WorkContinuityRun) -> dict[str, object]:
         "assembly_max_bytes": run.max_bytes,
         "hosts": list(run.hosts),
         "execution_configuration": summary.get("execution_configuration", []),
+        "comparison": summary.get("comparison", {}),
         "separated_measurements": {
             "injected_bytes": "reported per method and per task, never combined with an outcome metric",
             "outcome": "reported per method and per task as success, recovery cost, and conflict counts",
@@ -123,15 +124,19 @@ def render_markdown(payload: dict[str, object]) -> str:
                 (
                     "The model and host revision that produced each host's recordings. Outcomes are only compared "
                     "within one host, and a host that reports two configurations is rejected before scoring, so a "
-                    "configuration difference cannot be read as a method difference."
+                    "configuration difference cannot be read as a method difference. The recorded attempts each host "
+                    "contributed are shown too, because the comparison gate weighs a configuration by its share of "
+                    "the outcomes rather than only noticing that it appears somewhere."
                 ),
                 "",
-                "| Host | Host revision | Model |",
-                "| --- | --- | --- |",
+                "| Host | Host revision | Model | Recorded attempts |",
+                "| --- | --- | --- | ---: |",
             ]
         )
         for entry in configuration:
-            lines.append(f"| `{entry['host']}` | `{entry['host_revision']}` | `{entry['model']}` |")
+            lines.append(
+                f"| `{entry['host']}` | `{entry['host_revision']}` | `{entry['model']}` | {entry['attempt_count']} |"
+            )
         lines.append("")
     lines.extend(
         [
@@ -240,6 +245,7 @@ def render_markdown(payload: dict[str, object]) -> str:
     else:
         lines.append("Every selected task and method has a recorded attempt.")
     lines.extend(["", "### Where the treatment underperformed", ""])
+    comparison = _mapping(payload.get("comparison"), "comparison")
     underperformance = (
         _entries(failure.get("treatment_underperformance"), "failure_analysis.treatment_underperformance")
         if available
@@ -247,6 +253,8 @@ def render_markdown(payload: dict[str, object]) -> str:
     )
     if not available:
         lines.append("No comparison was performed, because recording coverage is unavailable for this run.")
+    elif _compared_host_count(comparison) == 0:
+        lines.append(f"No comparison was performed: {_comparison_reason(comparison)}.")
     elif not underperformance:
         lines.append("The treatment did not rank below a baseline on any host in this run.")
     for entry in underperformance:
@@ -460,6 +468,11 @@ def _boundaries(run: WorkContinuityRun) -> list[str]:
             "Handoff quality is checked against the fields the byte ceiling actually delivered, with the complete "
             "draft counted next to them, so a truncated context cannot pass on material it never carried."
         ),
+        (
+            "Recording coverage is not comparison coverage: a comparison exists only where the treatment and a "
+            "baseline were both recorded on one host, so a run can record every selected method and still report "
+            "that no comparison was performed."
+        ),
     ]
     if run.analysis is None:
         boundaries.append("No recorded attempts were supplied, so this run reports assembly only.")
@@ -518,3 +531,43 @@ def _analysis_available(failure: dict[str, object]) -> bool:
 def _unavailable_reason(failure: dict[str, object]) -> str:
     reason = failure.get("reason")
     return reason if isinstance(reason, str) and reason.strip() else "no recorded attempts were supplied"
+
+
+def _compared_host_count(comparison: dict[str, object]) -> int:
+    """Return how many hosts held both the treatment and a baseline recording.
+
+    Recording coverage only says every selected pair has an attempt. A comparison
+    needs a pair to compare, so this is what separates "nothing looked wrong" from
+    "nothing was looked at".
+    """
+
+    count = comparison.get("compared_host_count")
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise ReportError("report payload comparison.compared_host_count must be a non-negative integer")
+    return count
+
+
+def _comparison_reason(comparison: dict[str, object]) -> str:
+    """Name the specific absence that left this run without a comparison."""
+
+    baselines = comparison.get("baselines_selected")
+    if not isinstance(baselines, list):
+        raise ReportError("report payload comparison.baselines_selected must be an array")
+    treatment_arm_id = comparison.get("treatment_arm_id")
+    if not isinstance(treatment_arm_id, str):
+        raise ReportError("report payload comparison.treatment_arm_id must be a string")
+    if comparison.get("treatment_selected") is not True:
+        return f"the treatment arm `{treatment_arm_id}` was not selected in this run"
+    if not baselines:
+        return "no baseline arm was selected in this run"
+    if comparison.get("treatment_recorded") is not True:
+        return f"the treatment arm `{treatment_arm_id}` has no recorded attempt in this run"
+    recorded = comparison.get("baselines_recorded")
+    if not isinstance(recorded, list):
+        raise ReportError("report payload comparison.baselines_recorded must be an array")
+    if not recorded:
+        return "no baseline arm has a recorded attempt in this run"
+    return (
+        "the treatment and its baselines were recorded on different hosts, and this benchmark "
+        "only compares within one host"
+    )

@@ -272,11 +272,84 @@ def test_the_report_renders_the_recorded_execution_configuration(recorded: WorkC
     payload = report_payload(recorded)
 
     assert payload["execution_configuration"] == [
-        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}
+        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model", "attempt_count": 8}
     ]
     markdown = render_markdown(payload)
     assert "## Recorded execution configuration" in markdown
     assert "declared-model" in markdown
+    # The share of the recordings is rendered too, because the comparison gate
+    # weighs a configuration by it rather than only noticing that it appears.
+    assert "| `fixture-host` | `fixture-host@1` | `declared-model` | 8 |" in markdown
+
+
+def test_a_recording_without_the_treatment_reports_no_comparison(tmp_path: Path) -> None:
+    """The reproduction from review: coverage without a pair to compare.
+
+    Filtering the recording to one baseline and running that arm alone leaves the
+    run with an available analysis and no treatment at all, so "the treatment did
+    not rank below a baseline" would describe a measurement that never happened.
+    """
+
+    lock = analysis_lock(tmp_path)
+    entries = [
+        attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+    ]
+    path = write_attempts(tmp_path, entries, lock=lock)
+    run = run_work_continuity(
+        task_lock=lock,
+        run_id="baseline-only",
+        arm_ids=(FULL_TRANSCRIPT.arm_id,),
+        attempts_path=path,
+    )
+
+    payload = report_payload(run)
+    comparison = block(payload, "comparison")
+    markdown = render_markdown(payload)
+
+    assert comparison["treatment_selected"] is False
+    assert comparison["compared_host_count"] == 0
+    assert "Every selected task and method has a recorded attempt." in markdown
+    missing = "No comparison was performed: the treatment arm `rollover-handoff-v1` was not selected in this run."
+    assert missing in markdown
+    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+
+
+def test_a_selected_treatment_without_a_recording_reports_no_comparison(tmp_path: Path) -> None:
+    """Every arm selected, only the baselines recorded: still nothing to compare."""
+
+    lock = analysis_lock(tmp_path)
+    entries = [entry for entry in full_coverage(lock) if entry["arm_id"] != TREATMENT_ARM_ID]
+    path = write_attempts(tmp_path, entries, lock=lock)
+    run = run_work_continuity(task_lock=lock, run_id="no-treatment-recording", attempts_path=path)
+
+    payload = report_payload(run)
+    markdown = render_markdown(payload)
+
+    assert block(payload, "comparison")["treatment_recorded"] is False
+    assert "No comparison was performed: the treatment arm `rollover-handoff-v1` has no recorded attempt" in markdown
+    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+
+
+def test_a_treatment_and_baselines_on_different_hosts_report_different_hosts(tmp_path: Path) -> None:
+    """Both sides recorded, never on one host: the per-host scope is what blocks it."""
+
+    lock = analysis_lock(tmp_path)
+    entries = full_coverage(lock)
+    for entry in entries:
+        if entry["arm_id"] == TREATMENT_ARM_ID:
+            entry["host"] = "other-host"
+            entry["host_revision"] = "other-host@1"
+    path = write_attempts(tmp_path, entries, lock=lock)
+    run = run_work_continuity(task_lock=lock, run_id="split-hosts", attempts_path=path)
+
+    markdown = render_markdown(report_payload(run))
+
+    assert (
+        "No comparison was performed: the treatment and its baselines were recorded on different hosts, "
+        "and this benchmark only compares within one host." in markdown
+    )
+    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
 
 
 def test_the_report_writes_json_and_markdown_together(recorded: WorkContinuityRun, tmp_path: Path) -> None:

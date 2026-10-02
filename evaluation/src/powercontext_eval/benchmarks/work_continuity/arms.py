@@ -207,9 +207,11 @@ def ensure_comparable_work_continuity_runs(
     Both ``experiment_arm`` records must be registered configurations, and the
     host *name* is deliberately excluded so two host integrations remain
     comparable. The model and host revision those hosts ran under are not
-    excluded: a run whose arms ran on different models is not comparable to one
-    whose arms shared a model, and treating them as comparable would attribute the
-    configuration difference to the continuation method.
+    excluded, and neither is how the recordings were allocated between them: a run
+    whose arms ran on different models is not comparable to one whose arms shared
+    a model, and a run that put most recordings on one model is not comparable to
+    one that put most of them on another, because either difference would be read
+    as a continuation-method difference.
     """
 
     differences: list[str] = []
@@ -229,33 +231,63 @@ def ensure_comparable_work_continuity_runs(
 
 
 def _configuration_differences(manifest_a: Mapping[str, object], manifest_b: Mapping[str, object]) -> list[str]:
-    """Compare the declared execution configurations without comparing host names."""
+    """Compare how the recordings were allocated across execution configurations.
 
-    configurations_a = _configurations(manifest_a)
-    configurations_b = _configurations(manifest_b)
-    if configurations_a is None or configurations_b is None:
-        return ["execution_configuration is missing"]
-    if configurations_a != configurations_b:
-        return ["execution_configuration"]
+    Comparing only the *set* of configurations would let the allocation change
+    while the set stays the same, and the allocation is what mixes outcomes: a
+    run that gave model A one host and model B nine cannot be compared with one
+    that gave them nine and one, because that difference moves success counts
+    without saying anything about a continuation method. Host *names* stay out of
+    the comparison, so two host integrations remain comparable; what is compared
+    is how many recordings sat on each configuration.
+    """
+
+    allocation_a = _configuration_allocation(manifest_a)
+    allocation_b = _configuration_allocation(manifest_b)
+    if allocation_a is None or allocation_b is None:
+        return ["execution_configuration is missing or malformed"]
+    if allocation_a != allocation_b:
+        first = _allocation_text(allocation_a)
+        second = _allocation_text(allocation_b)
+        return [f"execution_configuration allocation ({first} vs {second})"]
     return []
 
 
-def _configurations(manifest: Mapping[str, object]) -> tuple[tuple[str, str], ...] | None:
-    """Return the distinct (host revision, model) pairs one manifest declares."""
+def _configuration_allocation(manifest: Mapping[str, object]) -> tuple[tuple[str, str, int], ...] | None:
+    """Return the recorded attempts per (host revision, model), host names dropped.
+
+    Entries that name the same configuration are merged, so the result is the
+    distribution the outcomes were drawn from rather than a per-host listing. A
+    manifest that cannot produce it — a missing block, a missing attempt count, a
+    non-positive count — yields ``None`` and the gate refuses the comparison
+    instead of treating the run as comparable by default.
+    """
 
     entries = manifest.get("execution_configuration")
     if not isinstance(entries, list):
         return None
-    pairs: set[tuple[str, str]] = set()
+    counts: dict[tuple[str, str], int] = {}
     for entry in entries:
         if not isinstance(entry, Mapping):
             return None
         revision = entry.get("host_revision")
         model = entry.get("model")
+        attempt_count = entry.get("attempt_count")
         if not isinstance(revision, str) or not isinstance(model, str):
             return None
-        pairs.add((revision, model))
-    return tuple(sorted(pairs))
+        if not isinstance(attempt_count, int) or isinstance(attempt_count, bool) or attempt_count < 1:
+            return None
+        key = (revision, model)
+        counts[key] = counts.get(key, 0) + attempt_count
+    return tuple(sorted((revision, model, count) for (revision, model), count in counts.items()))
+
+
+def _allocation_text(allocation: tuple[tuple[str, str, int], ...]) -> str:
+    """Render one allocation so a refusal names both distributions it compared."""
+
+    if not allocation:
+        return "none"
+    return ", ".join(f"{revision}/{model} x{count}" for revision, model, count in allocation)
 
 
 def _unregistered_arm_differences(manifest: Mapping[str, object], label: str) -> list[str]:

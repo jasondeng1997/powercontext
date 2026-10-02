@@ -54,11 +54,14 @@ def manifest(
     host: str = "host-a",
     host_revision: str = "runtime-1",
     model: str = "model-1",
+    attempt_count: int = 8,
 ) -> dict[str, Any]:
     """Build the manifest subset the comparability gate reads.
 
     The host revision defaults to a value that does not embed the host name, so a
-    test that changes only the host name is about the host name.
+    test that changes only the host name is about the host name. The attempt count
+    is part of the block because the gate compares how the recordings were
+    allocated between configurations, not only which configurations appear.
     """
 
     return {
@@ -70,9 +73,21 @@ def manifest(
         "experiment_arm": arm_manifest_record(get_continuation_arm(arm_id), max_bytes=max_bytes),
         "revisions": {"powercontext": powercontext, "integration": integration},
         "execution_configuration": [
-            {"host": host, "host_revision": host_revision, "model": model},
+            {"host": host, "host_revision": host_revision, "model": model, "attempt_count": attempt_count},
         ],
     }
+
+
+def allocation(models: list[str], *, arm_id: str = "full-transcript-v1", attempt_count: int = 8) -> dict[str, Any]:
+    """One manifest whose hosts are split across `models`, one host per entry."""
+
+    built = manifest(arm_id, attempt_count=attempt_count)
+    built["hosts"] = [f"host-{index}" for index in range(len(models))]
+    built["execution_configuration"] = [
+        {"host": f"host-{index}", "host_revision": "runtime-1", "model": model, "attempt_count": attempt_count}
+        for index, model in enumerate(models)
+    ]
+    return built
 
 
 def test_registry_is_the_paired_comparison_of_three_baselines_and_one_treatment() -> None:
@@ -188,6 +203,59 @@ def test_a_manifest_without_an_execution_configuration_is_not_comparable() -> No
 
     with pytest.raises(ContinuationArmError, match="execution_configuration is missing"):
         ensure_comparable_work_continuity_runs(manifest("full-transcript-v1"), forged)
+
+
+def test_a_changed_configuration_allocation_is_not_comparable() -> None:
+    """The same two models, allocated differently, is not a comparison.
+
+    One run gave model A a single host and model B nine; the other reversed that.
+    Both list the same set of configurations, so a set comparison accepts them,
+    while the mix alone moves the success counts by a wide margin.
+    """
+
+    one_of_ten = allocation(["model-a"] + ["model-b"] * 9)
+    nine_of_ten = allocation(["model-a"] * 9 + ["model-b"])
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration allocation") as error:
+        ensure_comparable_work_continuity_runs(one_of_ten, nine_of_ten)
+
+    message = str(error.value)
+    assert "runtime-1/model-a x8" in message
+    assert "runtime-1/model-a x72" in message
+
+
+def test_the_same_configuration_allocation_is_comparable_under_renamed_hosts() -> None:
+    """Host names stay outside the comparison, so only the allocation has to match."""
+
+    first = allocation(["model-a", "model-b"])
+    second = allocation(["model-a", "model-b"])
+    second["hosts"] = ["integration-one", "integration-two"]
+    for index, entry in enumerate(second["execution_configuration"]):  # type: ignore[union-attr]
+        entry["host"] = ["integration-one", "integration-two"][index]
+
+    ensure_comparable_work_continuity_runs(first, second)
+
+
+def test_a_manifest_whose_entries_lost_their_attempt_counts_is_not_comparable() -> None:
+    """A block that cannot show the allocation is refused, not assumed equal."""
+
+    forged = allocation(["model-a"])
+    del forged["execution_configuration"][0]["attempt_count"]  # type: ignore[index]
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration is missing or malformed"):
+        ensure_comparable_work_continuity_runs(allocation(["model-a"]), forged)
+
+
+def test_weighting_the_attempts_differently_across_the_same_hosts_is_not_comparable() -> None:
+    """Two hosts on two models, but the recordings sit mostly on the other one."""
+
+    first = allocation(["model-a", "model-b"], attempt_count=4)
+    second = allocation(["model-a", "model-b"], attempt_count=4)
+    second["execution_configuration"][0]["attempt_count"] = 20  # type: ignore[index]
+    second["execution_configuration"][1]["attempt_count"] = 2  # type: ignore[index]
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration allocation"):
+        ensure_comparable_work_continuity_runs(first, second)
 
 
 @pytest.mark.parametrize(

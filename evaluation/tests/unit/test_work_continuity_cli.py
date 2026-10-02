@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 from work_continuity_fixtures import analysis_lock, context_digest, write_attempts
 
@@ -119,7 +120,9 @@ def test_validate_also_checks_recorded_attempts(tmp_path: Path) -> None:
     # The protocol and the execution configuration are surfaced, not only validated.
     assert body["recording_protocol"]["task_lock_sha256"] == body["task_lock_sha256"]
     assert body["recording_protocol"]["assembly_max_bytes"] == 16_000
-    assert body["execution_configuration"] == [{"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}]
+    assert body["execution_configuration"] == [
+        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model", "attempt_count": 8}
+    ]
 
 
 def test_validate_reports_an_unusable_lock_without_a_traceback(tmp_path: Path) -> None:
@@ -142,6 +145,50 @@ def test_validate_rejects_an_attempts_artifact_that_cannot_be_scored(tmp_path: P
 
     assert result.exit_code == 2
     assert "unknown continuation arm" in result.output
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("task_set_id", "another-task-set"),
+        ("task_lock_sha256", "b" * 64),
+    ],
+)
+def test_validate_rejects_a_recording_bound_to_another_protocol(tmp_path: Path, field: str, value: str) -> None:
+    """The documented preflight must reject what `run` rejects.
+
+    The artifact stays well formed — a plausible task set, a hex digest — so only
+    the binding check can tell that these recordings cannot be scored here.
+    """
+
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    document = json.loads(attempts.read_text(encoding="utf-8"))
+    document["protocol"][field] = value
+    attempts.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["work-continuity", "validate", "--task-lock", str(lock), "--attempts", str(attempts)]
+    )
+
+    assert result.exit_code == 1
+    assert "Work-continuity validation failed" in result.output
+
+
+def test_validate_rejects_a_context_digest_this_project_cannot_assemble(tmp_path: Path) -> None:
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    document = json.loads(attempts.read_text(encoding="utf-8"))
+    document["attempts"][0]["context_sha256"] = "c" * 64
+    attempts.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["work-continuity", "validate", "--task-lock", str(lock), "--attempts", str(attempts)]
+    )
+
+    assert result.exit_code == 1
+    assert "Work-continuity validation failed" in result.output
+    assert "declares context" in result.output
 
 
 def test_run_assembles_scores_and_writes_one_run_directory(tmp_path: Path) -> None:

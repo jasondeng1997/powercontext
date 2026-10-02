@@ -189,12 +189,74 @@ def test_the_manifest_pins_every_input_a_reader_needs_to_reproduce_the_run(lock:
 
 
 def test_the_run_retains_each_recorded_hosts_execution_configuration(lock: Path, attempts: Path) -> None:
-    """The configuration is kept, not only used to validate, so it can be reported."""
+    """The configuration and its share of the recordings are kept, not only validated."""
 
-    expected = [{"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}]
+    expected = [
+        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model", "attempt_count": 8},
+    ]
 
     assert recorded_run(lock, attempts).manifest["execution_configuration"] == expected
     assert run_summary(recorded_run(lock, attempts))["execution_configuration"] == expected
+
+
+def test_the_summary_states_whether_a_comparison_was_actually_held(lock: Path, attempts: Path) -> None:
+    """Coverage and comparison are different questions, and the summary answers both."""
+
+    comparison = run_summary(recorded_run(lock, attempts))["comparison"]
+    assert isinstance(comparison, dict)
+    assert comparison["treatment_arm_id"] == ROLLOVER_HANDOFF.arm_id
+    assert comparison["treatment_selected"] is True
+    assert comparison["treatment_recorded"] is True
+    assert comparison["baselines_recorded"] == [
+        FULL_TRANSCRIPT.arm_id,
+        COMPACTED_TRANSCRIPT.arm_id,
+        INFORMAL_SUMMARY.arm_id,
+    ]
+    assert comparison["compared_hosts"] == [HOST]
+    assert comparison["compared_host_count"] == 1
+
+
+def test_an_assembly_only_run_holds_no_comparison(tmp_path: Path) -> None:
+    run = run_work_continuity(task_lock=analysis_lock(tmp_path), run_id="assembly-only")
+    comparison = run_summary(run)["comparison"]
+    assert isinstance(comparison, dict)
+
+    assert comparison["treatment_selected"] is True
+    assert comparison["treatment_recorded"] is False
+    assert comparison["baselines_recorded"] == []
+    assert comparison["compared_host_count"] == 0
+
+
+def test_a_recording_without_the_treatment_holds_no_comparison(lock: Path, tmp_path: Path) -> None:
+    """Every baseline recorded and no treatment is coverage without a comparison."""
+
+    entries = [entry for entry in attempts_entries(lock) if entry["arm_id"] != ROLLOVER_HANDOFF.arm_id]
+    path = write_isolated_attempts(tmp_path, lock, "baselines-only", entries)
+
+    run = recorded_run(lock, path)
+    comparison = run_summary(run)["comparison"]
+    assert isinstance(comparison, dict)
+
+    assert comparison["treatment_selected"] is True
+    assert comparison["treatment_recorded"] is False
+    assert comparison["compared_host_count"] == 0
+
+
+def test_a_treatment_and_a_baseline_on_different_hosts_hold_no_comparison(lock: Path, tmp_path: Path) -> None:
+    """Comparisons are scoped per host, so two hosts are not one comparison."""
+
+    entries = [
+        attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1", "h2"], performed="c1"), host="host-b"),
+        attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+    ]
+    path = write_isolated_attempts(tmp_path, lock, "split-hosts", entries)
+
+    comparison = run_summary(recorded_run(lock, path))["comparison"]
+    assert isinstance(comparison, dict)
+
+    assert comparison["treatment_recorded"] is True
+    assert comparison["baselines_recorded"] == [FULL_TRANSCRIPT.arm_id]
+    assert comparison["compared_host_count"] == 0
 
 
 def test_a_run_refuses_recordings_made_under_a_different_byte_ceiling(lock: Path, attempts: Path) -> None:
