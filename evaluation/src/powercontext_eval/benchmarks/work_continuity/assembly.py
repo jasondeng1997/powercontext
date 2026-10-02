@@ -21,13 +21,21 @@ same assembled context be compared byte for byte across hosts.
 
 Rendering is deliberately plain. A richer presentation would make injected bytes
 depend on formatting choices instead of on what the method chose to carry.
+
+Quality is checked twice for a rollover draft. ``draft_quality`` describes the
+material the method intended to deliver, and ``quality`` describes only what
+survived the byte ceiling. The delivered report is the one a reader must trust,
+because a budget that drops the next action cannot be allowed to certify the
+context it emptied.
 """
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from powercontext_eval.benchmarks.work_continuity.arms import ContinuationArm
+from powercontext_eval.benchmarks.work_continuity.arms import ROLLOVER_HANDOFF, ContinuationArm
 from powercontext_eval.benchmarks.work_continuity.catalog import ContinuationTask, StateFact
 from powercontext_eval.benchmarks.work_continuity.quality import (
     HandoffContent,
@@ -71,12 +79,19 @@ class ContinuationContext:
     delivered_superseded_turns: tuple[int, ...]
     carries_next_action: bool
     quality: QualityReport | None
+    draft_quality: QualityReport | None
 
     @property
     def injected_bytes(self) -> int:
         """Return the exact UTF-8 size of what the fresh session would receive."""
 
         return len(self.text.encode("utf-8"))
+
+    @property
+    def content_sha256(self) -> str:
+        """Return the digest of the delivered bytes a recording is bound to."""
+
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()
 
     @property
     def line_count(self) -> int:
@@ -103,7 +118,7 @@ def assemble_context(task: ContinuationTask, arm: ContinuationArm, *, max_bytes:
         and (f"state:{fact.fact_id}" in kept_ids or int(fact.evidence.split(":", 1)[1]) in delivered_turns)
     )
     superseded = tuple(turn for turn in task.obsolete_source_turns if turn in delivered_turns)
-    content = rollover_handoff_content(task) if arm.method == "rollover-handoff" else None
+    is_handoff = arm.method == "rollover-handoff"
     return ContinuationContext(
         task_id=task.task_id,
         arm_id=arm.arm_id,
@@ -118,12 +133,52 @@ def assemble_context(task: ContinuationTask, arm: ContinuationArm, *, max_bytes:
         unavailable_fact_ids=task.unavailable_fact_ids,
         delivered_superseded_turns=superseded,
         carries_next_action=arm.carries_next_action and "next_action" in kept_ids,
-        quality=check_rollover_quality(content, caller_objective=task.objective) if content is not None else None,
+        quality=_handoff_quality(task, kept_ids) if is_handoff else None,
+        draft_quality=_handoff_quality(task, (item.item_id for item in items)) if is_handoff else None,
+    )
+
+
+def handoff_content(task: ContinuationTask, delivered_item_ids: Iterable[str]) -> HandoffContent:
+    """Project the delivered items onto the RFC 0048 Handoff fields they fill in.
+
+    Only the fields that survived assembly are reported, so a byte ceiling that
+    drops the state or the next action shows up as missing content rather than as
+    a draft that was merely written and never delivered. The disposition stays the
+    draft's own claim, because that claim is exactly what the delivered fields are
+    then checked against.
+    """
+
+    kept = set(delivered_item_ids)
+    statements = tuple(
+        HandoffStatement(text=fact.text, evidence=(fact.evidence,))
+        for fact in task.required_state_facts
+        if fact.evidence is not None and f"state:{fact.fact_id}" in kept
+    )
+    omissions = tuple(omission for index, omission in enumerate(handoff_omissions(task)) if f"omission:{index}" in kept)
+    return HandoffContent(
+        objective=task.objective if "objective" in kept else "",
+        state_statements=statements,
+        disposition="continuable",
+        next_action=(
+            HandoffStatement(
+                text=task.expected_next_action.text,
+                evidence=tuple(f"fact:{fact_id}" for fact_id in task.expected_next_action.required_fact_ids),
+            )
+            if "next_action" in kept
+            else None
+        ),
+        omissions=omissions,
     )
 
 
 def rollover_handoff_content(task: ContinuationTask) -> HandoffContent:
-    """Project a task onto the RFC 0048 Handoff fields a rollover draft fills in.
+    """Project a task onto the complete Handoff draft the treatment intends to send."""
+
+    return handoff_content(task, (item.item_id for item in build_items(task, ROLLOVER_HANDOFF)))
+
+
+def handoff_omissions(task: ContinuationTask) -> tuple[str, ...]:
+    """Return the omissions a rollover draft discloses, the unverifiable ones included.
 
     Facts whose evidence cannot be produced are not asserted as current state;
     RFC 1783 asks the draft to record an omission instead of presenting
@@ -136,21 +191,7 @@ def rollover_handoff_content(task: ContinuationTask) -> HandoffContent:
         f'unavailable evidence for "{by_id[entry.fact_id].text}": {entry.reason} (pointer: {entry.pointer})'
         for entry in task.unavailable_evidence
     )
-    statements: list[HandoffStatement] = []
-    for fact in task.required_state_facts:
-        if fact.evidence is None:
-            continue
-        statements.append(HandoffStatement(text=fact.text, evidence=(fact.evidence,)))
-    return HandoffContent(
-        objective=task.objective,
-        state_statements=tuple(statements),
-        disposition="continuable",
-        next_action=HandoffStatement(
-            text=task.expected_next_action.text,
-            evidence=tuple(f"fact:{fact_id}" for fact_id in task.expected_next_action.required_fact_ids),
-        ),
-        omissions=tuple(omissions),
-    )
+    return tuple(omissions)
 
 
 def build_items(task: ContinuationTask, arm: ContinuationArm) -> tuple[AssembledItem, ...]:
@@ -193,7 +234,7 @@ def build_items(task: ContinuationTask, arm: ContinuationArm) -> tuple[Assembled
             )
         )
     if arm.carries_omissions:
-        omissions = rollover_handoff_content(task).omissions
+        omissions = handoff_omissions(task)
         if omissions:
             items.append(AssembledItem(item_id="label:omissions", kind="label", text=OMISSIONS_LABEL))
             items.extend(
@@ -201,6 +242,10 @@ def build_items(task: ContinuationTask, arm: ContinuationArm) -> tuple[Assembled
                 for index, omission in enumerate(omissions)
             )
     return tuple(items)
+
+
+def _handoff_quality(task: ContinuationTask, item_ids: Iterable[str]) -> QualityReport:
+    return check_rollover_quality(handoff_content(task, item_ids), caller_objective=task.objective)
 
 
 def _selected_turns(task: ContinuationTask, arm: ContinuationArm) -> tuple[int, ...]:
@@ -250,9 +295,9 @@ def _fit(
     return tuple(kept), list(reversed(dropped)), text, truncated
 
 
-def _body_text(items: list[AssembledItem]) -> str:
+def _body_text(items: Sequence[AssembledItem]) -> str:
     return "\n\n".join(item.text for item in items)
 
 
-def _body_bytes(items: list[AssembledItem]) -> int:
+def _body_bytes(items: Sequence[AssembledItem]) -> int:
     return len(_body_text(items).encode("utf-8"))

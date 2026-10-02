@@ -86,6 +86,7 @@ def report_payload(run: WorkContinuityRun) -> dict[str, object]:
         "task_set_id": run.task_set_id,
         "assembly_max_bytes": run.max_bytes,
         "hosts": list(run.hosts),
+        "execution_configuration": summary.get("execution_configuration", []),
         "separated_measurements": {
             "injected_bytes": "reported per method and per task, never combined with an outcome metric",
             "outcome": "reported per method and per task as success, recovery cost, and conflict counts",
@@ -112,13 +113,36 @@ def render_markdown(payload: dict[str, object]) -> str:
         f"- Assembly ceiling: {payload['assembly_max_bytes']} bytes per task",
         f"- Recorded hosts: {', '.join(_host_names(payload))}",
         "",
-        "## Injected bytes",
-        "",
-        "What each method delivered. These numbers are not a success measure.",
-        "",
-        "| Method | Tasks | Total bytes | Mean bytes | Max bytes | Truncated tasks |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
+    configuration = _entries(payload.get("execution_configuration"), "execution_configuration")
+    if configuration:
+        lines.extend(
+            [
+                "## Recorded execution configuration",
+                "",
+                (
+                    "The model and host revision that produced each host's recordings. Outcomes are only compared "
+                    "within one host, and a host that reports two configurations is rejected before scoring, so a "
+                    "configuration difference cannot be read as a method difference."
+                ),
+                "",
+                "| Host | Host revision | Model |",
+                "| --- | --- | --- |",
+            ]
+        )
+        for entry in configuration:
+            lines.append(f"| `{entry['host']}` | `{entry['host_revision']}` | `{entry['model']}` |")
+        lines.append("")
+    lines.extend(
+        [
+            "## Injected bytes",
+            "",
+            "What each method delivered. These numbers are not a success measure.",
+            "",
+            "| Method | Tasks | Total bytes | Mean bytes | Max bytes | Truncated tasks |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     for method in _entries(payload["methods"], "methods"):
         injected = _mapping(method.get("injected_bytes"), "methods[].injected_bytes")
         lines.append(
@@ -154,6 +178,27 @@ def render_markdown(payload: dict[str, object]) -> str:
     lines.extend(
         [
             "",
+            "## Delivered context quality",
+            "",
+            (
+                "RFC 1783 requirements checked against the fields that survived the byte ceiling. The complete "
+                "draft is counted next to them, not in place of them, so a budget that emptied a context cannot "
+                "certify it as satisfying the requirements."
+            ),
+            "",
+            "| Method | Deliveries checked | Delivered satisfied | Drafts checked | Drafts satisfied |",
+            "| --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for method in _entries(payload["methods"], "methods"):
+        quality = _mapping(method.get("context_quality"), "methods[].context_quality")
+        lines.append(
+            f"| `{method['arm_id']}` | {quality['checked_task_count']} | {quality['satisfied_task_count']} | "
+            f"{quality['draft_checked_task_count']} | {quality['draft_satisfied_task_count']} |"
+        )
+    lines.extend(
+        [
+            "",
             "## Per task",
             "",
             "| Task | Kind | Treatment outcome | Baselines ranked above the treatment |",
@@ -175,28 +220,34 @@ def render_markdown(payload: dict[str, object]) -> str:
             f"{', '.join(str(entry) for entry in beaten_by) if beaten_by else 'none'} |"
         )
     failure = _mapping(payload.get("failure_analysis"), "failure_analysis")
+    available = _analysis_available(failure)
     lines.extend(
         [
             "",
             "## Failure analysis",
             "",
-            f"Findings by class: {_inline_counts(failure['findings_by_class'])}",
+            f"Findings by class: {_inline_counts(failure['findings_by_class']) if available else 'unavailable'}",
             "",
         ]
     )
     unrecorded = failure["unrecorded_keys"]
     if not isinstance(unrecorded, list):
         raise ReportError("report payload failure_analysis.unrecorded_keys must be an array")
-    lines.append(
-        f"Unrecorded task/method/host combinations: {len(unrecorded)}"
-        if unrecorded
-        else "Every selected task and method has a recorded attempt."
-    )
+    if not available:
+        lines.append(f"Recording coverage is unavailable: {_unavailable_reason(failure)}")
+    elif unrecorded:
+        lines.append(f"Unrecorded task/method/host combinations: {len(unrecorded)}")
+    else:
+        lines.append("Every selected task and method has a recorded attempt.")
     lines.extend(["", "### Where the treatment underperformed", ""])
-    underperformance = _entries(
-        failure.get("treatment_underperformance"), "failure_analysis.treatment_underperformance"
+    underperformance = (
+        _entries(failure.get("treatment_underperformance"), "failure_analysis.treatment_underperformance")
+        if available
+        else []
     )
-    if not underperformance:
+    if not available:
+        lines.append("No comparison was performed, because recording coverage is unavailable for this run.")
+    elif not underperformance:
         lines.append("The treatment did not rank below a baseline on any host in this run.")
     for entry in underperformance:
         beaten_by = entry.get("beaten_by")
@@ -209,8 +260,10 @@ def render_markdown(payload: dict[str, object]) -> str:
             f"`{caused_by}`."
         )
     lines.extend(["", "### Findings", ""])
-    findings = _entries(failure.get("findings"), "failure_analysis.findings")
-    if not findings:
+    findings = _entries(failure.get("findings"), "failure_analysis.findings") if available else []
+    if not available:
+        lines.append("No finding was classified, because recording coverage is unavailable for this run.")
+    elif not findings:
         lines.append("No finding was classified for this run.")
     for finding in findings:
         requirement = finding.get("requirement") or "no contract change requested"
@@ -403,6 +456,10 @@ def _boundaries(run: WorkContinuityRun) -> list[str]:
             "Task success is scored against one declared next action per task, so a different but equally correct "
             "continuation is not credited."
         ),
+        (
+            "Handoff quality is checked against the fields the byte ceiling actually delivered, with the complete "
+            "draft counted next to them, so a truncated context cannot pass on material it never carried."
+        ),
     ]
     if run.analysis is None:
         boundaries.append("No recorded attempts were supplied, so this run reports assembly only.")
@@ -444,3 +501,20 @@ def _entries(value: object, label: str) -> list[dict[str, object]]:
 def _inline_counts(counts: object) -> str:
     rendered = ", ".join(f"{key}={value}" for key, value in sorted(_mapping(counts, "findings_by_class").items()))
     return rendered or "none"
+
+
+def _analysis_available(failure: dict[str, object]) -> bool:
+    """Return whether the run recorded anything it could classify.
+
+    An assembly-only run carries an empty coverage list and an empty comparison
+    list because neither was measured. Reporting those absences as "every method
+    has a recorded attempt" and "the treatment did not rank below any baseline"
+    would turn "not measured" into a clean bill of health.
+    """
+
+    return failure.get("available") is True
+
+
+def _unavailable_reason(failure: dict[str, object]) -> str:
+    reason = failure.get("reason")
+    return reason if isinstance(reason, str) and reason.strip() else "no recorded attempts were supplied"

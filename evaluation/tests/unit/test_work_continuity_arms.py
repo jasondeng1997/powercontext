@@ -52,8 +52,14 @@ def manifest(
     integration: str = "rev-integration",
     run_id: str = "run-1",
     host: str = "host-a",
+    host_revision: str = "runtime-1",
+    model: str = "model-1",
 ) -> dict[str, Any]:
-    """Build the manifest subset the comparability gate reads."""
+    """Build the manifest subset the comparability gate reads.
+
+    The host revision defaults to a value that does not embed the host name, so a
+    test that changes only the host name is about the host name.
+    """
 
     return {
         "run_id": run_id,
@@ -63,6 +69,9 @@ def manifest(
         "assembly": {"max_bytes": max_bytes},
         "experiment_arm": arm_manifest_record(get_continuation_arm(arm_id), max_bytes=max_bytes),
         "revisions": {"powercontext": powercontext, "integration": integration},
+        "execution_configuration": [
+            {"host": host, "host_revision": host_revision, "model": model},
+        ],
     }
 
 
@@ -151,6 +160,34 @@ def test_run_identity_and_the_host_are_outside_the_comparison() -> None:
         manifest("rollover-handoff-v1", run_id="run-a", host="host-a"),
         manifest("rollover-handoff-v1", run_id="run-b", host="host-b"),
     )
+
+
+def test_a_run_whose_hosts_ran_different_configurations_is_not_comparable() -> None:
+    """A model or runtime difference is not a method difference.
+
+    Comparing such runs would attribute the configuration change to the
+    continuation method, and the tampered run used to pass this gate.
+    """
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration"):
+        ensure_comparable_work_continuity_runs(
+            manifest("rollover-handoff-v1", host="host-a"),
+            manifest("rollover-handoff-v1", host="host-a", model="model-2"),
+        )
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration"):
+        ensure_comparable_work_continuity_runs(
+            manifest("rollover-handoff-v1"),
+            manifest("rollover-handoff-v1", host="host-b", host_revision="runtime-2"),
+        )
+
+
+def test_a_manifest_without_an_execution_configuration_is_not_comparable() -> None:
+    forged = manifest("rollover-handoff-v1")
+    del forged["execution_configuration"]
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration is missing"):
+        ensure_comparable_work_continuity_runs(manifest("full-transcript-v1"), forged)
 
 
 @pytest.mark.parametrize(

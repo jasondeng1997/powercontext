@@ -12,13 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The work-continuity rubric.
-
-Every metric is derived from the assembled context and the declared facts of a
-recorded step, so these tests drive the score from a hand-built attempt rather
-than from text matching. The one property that matters most is also the one the
-issue calls out: injected bytes stay out of the outcome ranking.
-"""
+"""Unit tests for the work-continuity rubric."""
 
 from __future__ import annotations
 
@@ -27,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from work_continuity_fixtures import analysis_lock
+from work_continuity_fixtures import UNBOUND_CONTEXT_SHA256, analysis_lock
 
 from powercontext_eval.benchmarks.work_continuity.arms import (
     COMPACTED_TRANSCRIPT,
@@ -68,19 +62,36 @@ def recorded(
         task_id=task_id,
         arm_id=arm_id,
         host=host,
-        host_revision=None,
-        model=None,
+        host_revision="declared-host@1",
+        model="declared-model",
+        # Binding a recording to its delivered context is enforced by the run, not
+        # by scoring, so these tests are free to score against any context.
+        context_sha256=UNBOUND_CONTEXT_SHA256,
         steps=tuple(RecordedStep(**step) for step in steps),
     )
 
 
-def step(number: int, relied_on: list[str], *, correction: bool = False) -> dict[str, Any]:
-    return {"step": number, "action_text": f"action {number}", "relied_on": relied_on, "correction": correction}
+def step(
+    number: int,
+    relied_on: list[str],
+    *,
+    performed: str | None = None,
+    correction: bool = False,
+) -> dict[str, Any]:
+    """One recorded step. ``performed`` names the declared action the step carried out."""
+
+    return {
+        "step": number,
+        "action_text": f"action {number}",
+        "relied_on": relied_on,
+        "performed_action_id": performed,
+        "correction": correction,
+    }
 
 
 def test_a_recovered_attempt_reports_success_and_the_step_it_recovered_at(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    attempt = recorded(step(1, ["h1"]), step(2, ["h1", "h2"]))
+    attempt = recorded(step(1, ["h1"]), step(2, ["h1", "h2"], performed="c1"))
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
@@ -93,11 +104,59 @@ def test_a_recovered_attempt_reports_success_and_the_step_it_recovered_at(catalo
 
 def test_a_step_only_recovers_when_it_relies_on_every_required_fact(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    attempt = recorded(step(1, ["h1"]), step(2, ["h2"]), step(3, ["h1", "h2"]))
+    attempt = recorded(
+        step(1, ["h1"], performed="c1"),
+        step(2, ["h2"], performed="c1"),
+        step(3, ["h1", "h2"], performed="c1"),
+    )
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
     assert score.time_to_recover_state == 3
+
+
+def test_reading_the_facts_without_carrying_out_the_action_is_not_a_recovery(catalog: TaskCatalog) -> None:
+    """Reading the constraints is not continuing the work.
+
+    A recording that only inspected the state a next action depends on scored as a
+    recovery before, which let a session that never did anything count as success.
+    """
+
+    context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
+    attempt = recorded(step(1, ["h1", "h2"]))
+
+    score = score_attempt(catalog.require("t-audit"), context, attempt)
+
+    assert score.steps[0].performs_expected_action is False
+    assert score.steps[0].is_recovery is False
+    assert score.task_success is False
+    assert score.time_to_recover_state is None
+
+
+def test_a_step_that_continues_from_a_replaced_plan_is_not_a_recovery(catalog: TaskCatalog) -> None:
+    context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
+    attempt = recorded(step(1, ["o1", "h1", "h2"], performed="c1"))
+
+    score = score_attempt(catalog.require("t-audit"), context, attempt)
+
+    assert score.steps[0].performs_expected_action is True
+    assert score.steps[0].superseded_reliance == ("o1",)
+    assert score.task_success is False
+    assert score.incorrect_assumptions == 1
+
+
+def test_a_later_clean_action_still_recovers_after_a_stale_step(catalog: TaskCatalog) -> None:
+    context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
+    attempt = recorded(
+        step(1, ["o1", "h1", "h2"], performed="c1"),
+        step(2, ["h1", "h2"], performed="c1"),
+    )
+
+    score = score_attempt(catalog.require("t-audit"), context, attempt)
+
+    assert score.task_success is True
+    assert score.time_to_recover_state == 2
+    assert score.incorrect_assumptions == 1
 
 
 def test_an_attempt_that_never_recovers_reports_no_recovery_step(catalog: TaskCatalog) -> None:
@@ -114,7 +173,7 @@ def test_an_attempt_that_never_recovers_reports_no_recovery_step(catalog: TaskCa
 
 def test_a_superseded_reliance_counts_as_an_incorrect_assumption(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    attempt = recorded(step(1, ["o1"]), step(2, ["h1", "h2"]))
+    attempt = recorded(step(1, ["o1"]), step(2, ["h1", "h2"], performed="c1"))
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
@@ -125,7 +184,11 @@ def test_a_superseded_reliance_counts_as_an_incorrect_assumption(catalog: TaskCa
 
 def test_a_reliance_on_a_fact_the_context_never_delivered_is_missing_evidence(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", COMPACTED_TRANSCRIPT)
-    attempt = recorded(step(1, ["h1", "h3"]), step(2, ["h1", "h2"]), arm_id="compacted-transcript-v1")
+    attempt = recorded(
+        step(1, ["h1", "h3"]),
+        step(2, ["h1", "h2"], performed="c1"),
+        arm_id="compacted-transcript-v1",
+    )
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
@@ -142,7 +205,7 @@ def test_a_reliance_on_unavailable_evidence_is_an_unverifiable_claim(catalog: Ta
     context = context_for(catalog, "t-doc", ROLLOVER_HANDOFF)
     attempt = recorded(
         step(1, ["g3"]),
-        step(2, ["g1", "g2"]),
+        step(2, ["g1", "g2"], performed="b1"),
         task_id="t-doc",
         arm_id="rollover-handoff-v1",
     )
@@ -153,11 +216,14 @@ def test_a_reliance_on_unavailable_evidence_is_an_unverifiable_claim(catalog: Ta
     assert score.unverifiable_claims == 1
     assert score.steps[0].unavailable_reliance == ("g3",)
     assert score.missing_evidence == 0
+    # Evidence that cannot be produced is a disclosed conflict, not a failure to
+    # continue: the action's own facts were delivered and the action was carried out.
+    assert score.task_success is True
 
 
 def test_a_recorded_correction_counts_toward_the_user_correction_burden(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    attempt = recorded(step(1, ["h1"], correction=True), step(2, ["h1", "h2"]))
+    attempt = recorded(step(1, ["h1"], correction=True), step(2, ["h1", "h2"], performed="c1"))
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
@@ -167,7 +233,7 @@ def test_a_recorded_correction_counts_toward_the_user_correction_burden(catalog:
 
 def test_the_score_carries_the_contexts_injected_bytes_verbatim(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", ROLLOVER_HANDOFF)
-    attempt = recorded(step(1, ["h1", "h2"]), arm_id="rollover-handoff-v1")
+    attempt = recorded(step(1, ["h1", "h2"], performed="c1"), arm_id="rollover-handoff-v1")
 
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
@@ -180,7 +246,7 @@ def test_the_outcome_rank_deliberately_excludes_injected_bytes(catalog: TaskCata
     """Injecting fewer bytes must never improve the continuation ranking."""
 
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    attempt = recorded(step(1, ["h1", "h2"]))
+    attempt = recorded(step(1, ["h1", "h2"], performed="c1"))
     score = score_attempt(catalog.require("t-audit"), context, attempt)
 
     cheaper = replace(score, injected_bytes=score.injected_bytes // 10, max_bytes=64)
@@ -194,7 +260,7 @@ def test_a_recovered_attempt_always_ranks_above_an_unrecovered_one(catalog: Task
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
     task = catalog.require("t-audit")
 
-    recovered = score_attempt(task, context, recorded(step(1, ["h1", "h2"])))
+    recovered = score_attempt(task, context, recorded(step(1, ["h1", "h2"], performed="c1")))
     unrecovered = score_attempt(task, context, recorded(step(1, ["h1"])))
 
     assert unrecovered.outcome_rank < recovered.outcome_rank
@@ -204,12 +270,12 @@ def test_conflicts_rank_below_a_clean_recovery_with_the_same_success(catalog: Ta
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
     task = catalog.require("t-audit")
 
-    clean = score_attempt(task, context, recorded(step(1, ["h1", "h2"])))
-    stale = score_attempt(task, context, recorded(step(1, ["o1", "h1", "h2"])))
+    clean = score_attempt(task, context, recorded(step(1, ["h1", "h2"], performed="c1")))
+    conflicted = score_attempt(task, context, recorded(step(1, ["o1"]), step(2, ["h1", "h2"], performed="c1")))
 
     assert clean.task_success is True
-    assert stale.task_success is True
-    assert stale.outcome_rank < clean.outcome_rank
+    assert conflicted.task_success is True
+    assert conflicted.outcome_rank < clean.outcome_rank
 
 
 def test_facts_missing_from_context_names_what_the_action_needed(catalog: TaskCatalog) -> None:
@@ -217,7 +283,7 @@ def test_facts_missing_from_context_names_what_the_action_needed(catalog: TaskCa
     score = score_attempt(
         catalog.require("t-audit"),
         context,
-        recorded(step(1, ["h1", "h2"]), arm_id="compacted-transcript-v1"),
+        recorded(step(1, ["h1", "h2"], performed="c1"), arm_id="compacted-transcript-v1"),
     )
 
     assert score.expected_fact_ids == ("h1", "h2")
@@ -227,7 +293,11 @@ def test_facts_missing_from_context_names_what_the_action_needed(catalog: TaskCa
 
 def test_a_context_that_dropped_a_required_fact_reports_an_assembly_gap(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", INFORMAL_SUMMARY)
-    score = score_attempt(catalog.require("t-audit"), context, recorded(step(1, ["h2"]), arm_id="informal-summary-v1"))
+    score = score_attempt(
+        catalog.require("t-audit"),
+        context,
+        recorded(step(1, ["h2"]), arm_id="informal-summary-v1"),
+    )
 
     assert score.delivered_fact_ids == ("h2",)
     assert score.facts_missing_from_context == ("h1",)
@@ -245,8 +315,8 @@ def test_scoring_refuses_an_attempt_from_a_different_task_or_arm(catalog: TaskCa
 def test_scoring_every_attempt_for_one_task_and_arm_keeps_them_separate(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
     attempts = (
-        recorded(step(1, ["h1", "h2"]), host="host-a"),
-        recorded(step(1, ["h1"]), step(2, ["h1", "h2"]), host="host-b"),
+        recorded(step(1, ["h1", "h2"], performed="c1"), host="host-a"),
+        recorded(step(1, ["h1"]), step(2, ["h1", "h2"], performed="c1"), host="host-b"),
     )
 
     scores = score_attempts(catalog.require("t-audit"), context, attempts)
@@ -257,7 +327,7 @@ def test_scoring_every_attempt_for_one_task_and_arm_keeps_them_separate(catalog:
 
 def test_two_runs_of_the_same_arm_over_the_same_task_produce_identical_numbers(catalog: TaskCatalog) -> None:
     task = catalog.require("t-audit")
-    attempt = recorded(step(1, ["o1"]), step(2, ["h1", "h2"]))
+    attempt = recorded(step(1, ["o1"]), step(2, ["h1", "h2"], performed="c1"))
 
     first = score_attempt(task, context_for(catalog, "t-audit", FULL_TRANSCRIPT), attempt)
     second = score_attempt(task, context_for(catalog, "t-audit", FULL_TRANSCRIPT), attempt)

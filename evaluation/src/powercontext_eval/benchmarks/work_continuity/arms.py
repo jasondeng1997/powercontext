@@ -131,9 +131,11 @@ TREATMENT_ARM_ID = ROLLOVER_HANDOFF.arm_id
 _ARMS_BY_ID = {arm.arm_id: arm for arm in CONTINUATION_ARMS}
 
 # Run-manifest fields that must match before two runs may be compared. Run
-# identity, timestamps, machine-local paths, the host, and the arm record itself
-# may differ: the host is a declared dimension of this benchmark, and the arm is
-# exactly the intended difference.
+# identity, timestamps, machine-local paths, the host *name*, and the arm record
+# itself may differ: the host is a declared dimension of this benchmark, and the
+# arm is exactly the intended difference. What the hosts ran — the execution
+# configuration below — is compared separately, because a model or runtime
+# difference is not a method difference.
 _COMPARED_MANIFEST_PATHS: tuple[tuple[str, ...], ...] = (
     ("inputs", "task_lock", "content_sha256"),
     ("task_ids",),
@@ -203,7 +205,11 @@ def ensure_comparable_work_continuity_runs(
     """Refuse to compare two runs whose pinned conditions differ beyond the arm.
 
     Both ``experiment_arm`` records must be registered configurations, and the
-    host is deliberately excluded so two host integrations remain comparable.
+    host *name* is deliberately excluded so two host integrations remain
+    comparable. The model and host revision those hosts ran under are not
+    excluded: a run whose arms ran on different models is not comparable to one
+    whose arms shared a model, and treating them as comparable would attribute the
+    configuration difference to the continuation method.
     """
 
     differences: list[str] = []
@@ -217,8 +223,39 @@ def ensure_comparable_work_continuity_runs(
             differences.append(f"{name} is missing")
         elif value_a != value_b:
             differences.append(name)
+    differences.extend(_configuration_differences(manifest_a, manifest_b))
     if differences:
         raise ContinuationArmError("runs are not comparable: " + "; ".join(differences))
+
+
+def _configuration_differences(manifest_a: Mapping[str, object], manifest_b: Mapping[str, object]) -> list[str]:
+    """Compare the declared execution configurations without comparing host names."""
+
+    configurations_a = _configurations(manifest_a)
+    configurations_b = _configurations(manifest_b)
+    if configurations_a is None or configurations_b is None:
+        return ["execution_configuration is missing"]
+    if configurations_a != configurations_b:
+        return ["execution_configuration"]
+    return []
+
+
+def _configurations(manifest: Mapping[str, object]) -> tuple[tuple[str, str], ...] | None:
+    """Return the distinct (host revision, model) pairs one manifest declares."""
+
+    entries = manifest.get("execution_configuration")
+    if not isinstance(entries, list):
+        return None
+    pairs: set[tuple[str, str]] = set()
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            return None
+        revision = entry.get("host_revision")
+        model = entry.get("model")
+        if not isinstance(revision, str) or not isinstance(model, str):
+            return None
+        pairs.add((revision, model))
+    return tuple(sorted(pairs))
 
 
 def _unregistered_arm_differences(manifest: Mapping[str, object], label: str) -> list[str]:

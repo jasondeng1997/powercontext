@@ -48,6 +48,7 @@ from powercontext_eval.benchmarks.work_continuity.arms import (
 from powercontext_eval.benchmarks.work_continuity.assembly import ContinuationContext, assemble_context
 from powercontext_eval.benchmarks.work_continuity.attempts import AttemptSet, load_attempts
 from powercontext_eval.benchmarks.work_continuity.catalog import ContinuationTask, TaskCatalog
+from powercontext_eval.benchmarks.work_continuity.quality import QualityReport
 from powercontext_eval.benchmarks.work_continuity.rubric import AttemptScore, score_attempt
 from powercontext_eval.errors import PowerContextEvalError
 
@@ -110,8 +111,11 @@ def run_work_continuity(
     tasks = catalog.select(task_ids)
     attempts = load_attempts(attempts_path, catalog=catalog) if attempts_path is not None else None
     _require_attempts_cover_selection(tasks, arms, attempts)
+    _require_attempts_match_protocol(attempts, catalog=catalog, max_bytes=max_bytes)
 
     contexts = tuple(assemble_context(task, arm, max_bytes=max_bytes) for task in tasks for arm in arms)
+    if attempts is not None:
+        _require_attempts_match_contexts(attempts, contexts)
     scores: list[AttemptScore] = []
     analysis: WorkContinuityAnalysis | None = None
     hosts: tuple[str, ...] = ()
@@ -242,6 +246,7 @@ def run_summary(run: WorkContinuityRun) -> dict[str, object]:
         "classification": run.classification,
         "assembly_max_bytes": run.max_bytes,
         "hosts": list(run.hosts),
+        "execution_configuration": run.manifest.get("execution_configuration", []),
         "arms": by_arm,
     }
     if run.analysis is not None:
@@ -275,6 +280,64 @@ def _require_attempts_cover_selection(
             raise WorkContinuityRunError(f"attempts name arm {attempt.arm_id} but the run selects {sorted(arm_ids)}")
 
 
+def _require_attempts_match_protocol(
+    attempts: AttemptSet | None,
+    *,
+    catalog: TaskCatalog,
+    max_bytes: int,
+) -> None:
+    """Reject a recording made under a protocol other than the one this run assembles.
+
+    Contexts are a deterministic function of the task lock and the byte ceiling,
+    so a recording that pins different ones is evidence about contexts this run
+    never built. Scoring it anyway is how a default-ceiling recording ended up
+    reporting successes for contexts assembled under a one-byte ceiling.
+    """
+
+    if attempts is None:
+        return
+    protocol = attempts.protocol
+    if protocol.task_set_id != catalog.task_set_id:
+        raise WorkContinuityRunError(
+            f"recorded attempts declare task set {protocol.task_set_id!r} but the run loaded {catalog.task_set_id!r}"
+        )
+    if protocol.task_lock_sha256 != catalog.content_sha256:
+        raise WorkContinuityRunError(
+            "recorded attempts were made against a different task lock: "
+            f"attempts pin {protocol.task_lock_sha256} but this run loaded {catalog.content_sha256}"
+        )
+    if protocol.assembly_max_bytes != max_bytes:
+        raise WorkContinuityRunError(
+            f"recorded attempts were made under a {protocol.assembly_max_bytes} byte ceiling but this run "
+            f"assembles contexts under {max_bytes} bytes"
+        )
+
+
+def _require_attempts_match_contexts(
+    attempts: AttemptSet,
+    contexts: Sequence[ContinuationContext],
+) -> None:
+    """Reject a recording whose declared context digest is not the one delivered.
+
+    Selection coverage is checked separately, so every attempt here has a context
+    to bind to; the digest is what proves the recording is about that context and
+    not about an earlier assembly of the same task and arm.
+    """
+
+    by_key = {(context.task_id, context.arm_id): context for context in contexts}
+    for attempt in attempts.attempts:
+        context = by_key.get((attempt.task_id, attempt.arm_id))
+        if context is None:
+            raise WorkContinuityRunError(
+                f"recorded attempt for task {attempt.task_id} arm {attempt.arm_id} has no assembled context"
+            )
+        if attempt.context_sha256 != context.content_sha256:
+            raise WorkContinuityRunError(
+                f"recorded attempt for task {attempt.task_id} arm {attempt.arm_id} host {attempt.host!r} "
+                f"declares context {attempt.context_sha256} but this run delivers {context.content_sha256}"
+            )
+
+
 def _manifest(
     *,
     catalog: TaskCatalog,
@@ -299,7 +362,17 @@ def _manifest(
                 "content_sha256": catalog.content_sha256,
             },
             "attempts": (
-                None if attempts is None else {"path": attempts.path.name, "content_sha256": attempts.content_sha256}
+                None
+                if attempts is None
+                else {
+                    "path": attempts.path.name,
+                    "content_sha256": attempts.content_sha256,
+                    "protocol": {
+                        "task_set_id": attempts.protocol.task_set_id,
+                        "task_lock_sha256": attempts.protocol.task_lock_sha256,
+                        "assembly_max_bytes": attempts.protocol.assembly_max_bytes,
+                    },
+                }
             ),
         },
         "assembly": {"max_bytes": max_bytes},
@@ -310,7 +383,27 @@ def _manifest(
             "integration": integration_revision,
         },
         "hosts": list(attempts.hosts) if attempts is not None else [],
+        "execution_configuration": execution_configuration(attempts),
     }
+
+
+def execution_configuration(attempts: AttemptSet | None) -> list[dict[str, object]]:
+    """Return the declared execution configuration of every recorded host.
+
+    The configuration is retained rather than only used for validation, so a
+    reader can see which model and host revision produced the outcomes and can
+    tell a method difference from a configuration difference.
+    """
+
+    if attempts is None:
+        return []
+    by_host: dict[str, tuple[str, str]] = {}
+    for attempt in attempts.attempts:
+        by_host.setdefault(attempt.host, attempt.configuration)
+    return [
+        {"host": host, "host_revision": configuration[0], "model": configuration[1]}
+        for host, configuration in sorted(by_host.items())
+    ]
 
 
 def _task_evidence_digest(tasks: Sequence[ContinuationTask]) -> str:
@@ -349,29 +442,34 @@ def _assembly_row(context: ContinuationContext) -> dict[str, object]:
         "unavailable_fact_ids": list(context.unavailable_fact_ids),
         "delivered_superseded_turns": list(context.delivered_superseded_turns),
         "carries_next_action": context.carries_next_action,
-        "content_sha256": hashlib.sha256(context.text.encode("utf-8")).hexdigest(),
-        "quality": None
-        if context.quality is None
-        else {
-            "satisfied": context.quality.satisfied,
-            "violations_by_requirement": context.quality.violations_by_requirement,
-            "violations": [
-                {
-                    "requirement": finding.requirement,
-                    "field": finding.field,
-                    "detail": finding.detail,
-                }
-                for finding in context.quality.violations
-            ],
-            "advisories": [
-                {
-                    "requirement": finding.requirement,
-                    "field": finding.field,
-                    "detail": finding.detail,
-                }
-                for finding in context.quality.advisories
-            ],
-        },
+        "content_sha256": context.content_sha256,
+        "quality": _quality_row(context.quality),
+        "draft_quality": _quality_row(context.draft_quality),
+    }
+
+
+def _quality_row(report: QualityReport | None) -> dict[str, object] | None:
+    if report is None:
+        return None
+    return {
+        "satisfied": report.satisfied,
+        "violations_by_requirement": report.violations_by_requirement,
+        "violations": [
+            {
+                "requirement": finding.requirement,
+                "field": finding.field,
+                "detail": finding.detail,
+            }
+            for finding in report.violations
+        ],
+        "advisories": [
+            {
+                "requirement": finding.requirement,
+                "field": finding.field,
+                "detail": finding.detail,
+            }
+            for finding in report.advisories
+        ],
     }
 
 
@@ -395,6 +493,8 @@ def _score_row(score: AttemptScore) -> dict[str, object]:
             {
                 "step": scored.step,
                 "relied_on": list(scored.relied_on),
+                "performed_action_id": scored.performed_action_id,
+                "performs_expected_action": scored.performs_expected_action,
                 "superseded_reliance": list(scored.superseded_reliance),
                 "undelivered_reliance": list(scored.undelivered_reliance),
                 "unavailable_reliance": list(scored.unavailable_reliance),
@@ -407,18 +507,30 @@ def _score_row(score: AttemptScore) -> dict[str, object]:
 
 
 def _quality_block(contexts: Sequence[ContinuationContext]) -> dict[str, object]:
-    checked = [context.quality for context in contexts if context.quality is not None]
-    if not checked:
-        return {"checked_task_count": 0, "satisfied_task_count": 0, "violations_by_requirement": {}}
+    """Summarise handoff quality for what was delivered, and separately for what was drafted.
+
+    Truncation must not be able to certify an unusable context, so the delivered
+    counts are the headline and the draft counts are reported next to them rather
+    than in place of them.
+    """
+
+    delivered = [context.quality for context in contexts if context.quality is not None]
+    drafts = [context.draft_quality for context in contexts if context.draft_quality is not None]
+    return {
+        "checked_task_count": len(delivered),
+        "satisfied_task_count": sum(1 for report in delivered if report.satisfied),
+        "draft_checked_task_count": len(drafts),
+        "draft_satisfied_task_count": sum(1 for report in drafts if report.satisfied),
+        "violations_by_requirement": _violation_counts(delivered),
+    }
+
+
+def _violation_counts(reports: Sequence[QualityReport]) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for report in checked:
+    for report in reports:
         for requirement, count in report.violations_by_requirement.items():
             counts[requirement] = counts.get(requirement, 0) + count
-    return {
-        "checked_task_count": len(checked),
-        "satisfied_task_count": sum(1 for report in checked if report.satisfied),
-        "violations_by_requirement": counts,
-    }
+    return counts
 
 
 def _mean_recovery(scores: Sequence[AttemptScore]) -> float | None:

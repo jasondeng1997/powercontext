@@ -311,8 +311,7 @@ def classify_failure(
     ):
         return None
     needed = set(task.expected_next_action.required_fact_ids)
-    dropped = {item_id.split(":", 1)[1] for item_id in context.dropped_item_ids if item_id.startswith("state:")}
-    if needed & dropped:
+    if needed & facts_lost_to_the_budget(task, context):
         return BUDGET_TRUNCATION
     if not needed <= set(context.delivered_fact_ids):
         return CONTEXT_ABSENT
@@ -323,6 +322,28 @@ def classify_failure(
     if score.missing_evidence:
         return MISSING_EVIDENCE
     return VAGUE_NEXT_ACTION
+
+
+def facts_lost_to_the_budget(task: ContinuationTask, context: ContinuationContext) -> set[str]:
+    """Return the required facts the byte ceiling removed together with their carrier.
+
+    A method delivers a fact either as a state item or as the transcript turn its
+    evidence lives in, so a turn dropped by ``_fit`` is a dropped fact. Counting
+    only dropped ``state`` items would make budget truncation unreachable for every
+    transcript method and would report a truncated transcript window as an absent
+    context, which in turn advises widening a window that already selected every
+    turn. Only items the budget removed are considered, so a turn the arm's own
+    window never selected stays a context-absence question instead.
+    """
+
+    dropped = set(context.dropped_item_ids)
+    lost = {item_id.split(":", 1)[1] for item_id in dropped if item_id.startswith("state:")}
+    for fact in task.required_state_facts:
+        if fact.evidence is None:
+            continue
+        if f"turn:{int(fact.evidence.split(':', 1)[1])}" in dropped:
+            lost.add(fact.fact_id)
+    return lost
 
 
 def analyse_task_outcomes(task: ContinuationTask, outcomes: Sequence[ArmOutcome]) -> TaskAnalysis:
@@ -341,7 +362,7 @@ def analyse_task_outcomes(task: ContinuationTask, outcomes: Sequence[ArmOutcome]
                 failure_class=failure_class,
                 requirement=FAILURE_REQUIREMENTS[failure_class],
                 recommendation=FAILURE_RECOMMENDATIONS[failure_class],
-                detail=_detail(failure_class, outcome),
+                detail=_detail(failure_class, task, outcome),
             )
         )
     return TaskAnalysis(task_id=task.task_id, outcomes=tuple(outcomes), findings=tuple(findings))
@@ -353,13 +374,15 @@ def analyse_work_continuity(task_analyses: Sequence[TaskAnalysis]) -> WorkContin
     return WorkContinuityAnalysis(task_analyses=tuple(task_analyses))
 
 
-def _detail(failure_class: str, outcome: ArmOutcome) -> str:
+def _detail(failure_class: str, task: ContinuationTask, outcome: ArmOutcome) -> str:
     score = outcome.score
     if score is None:
         return "no attempt recorded for this task and method"
     if failure_class == BUDGET_TRUNCATION:
-        dropped = [item for item in outcome.context.dropped_item_ids if item.startswith("state:")]
-        return f"the {score.max_bytes} byte ceiling dropped required state items: {', '.join(dropped)}"
+        lost = ", ".join(sorted(facts_lost_to_the_budget(task, outcome.context)))
+        carriers = [item for item in outcome.context.dropped_item_ids if item.startswith("state:")]
+        carried_by = f"state items {', '.join(carriers)}" if carriers else "the turns their evidence lives in"
+        return f"the {score.max_bytes} byte ceiling dropped required facts ({lost}) together with {carried_by}"
     if failure_class == CONTEXT_ABSENT:
         missing = ", ".join(score.facts_missing_from_context)
         return f"the context never delivered facts the next action depends on: {missing}"

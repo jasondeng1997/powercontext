@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from work_continuity_fixtures import analysis_lock, budget_through
+from work_continuity_fixtures import UNBOUND_CONTEXT_SHA256, analysis_lock, budget_through
 
 from powercontext_eval.benchmarks.work_continuity.analysis import (
     BUDGET_TRUNCATION,
@@ -87,14 +87,31 @@ def recorded(
         task_id=task_id,
         arm_id=arm_id,
         host=host,
-        host_revision=None,
-        model=None,
+        host_revision="declared-host@1",
+        model="declared-model",
+        # Binding a recording to its delivered context is enforced by the run, not
+        # by scoring, so these tests are free to score against any context.
+        context_sha256=UNBOUND_CONTEXT_SHA256,
         steps=tuple(RecordedStep(**step) for step in steps),
     )
 
 
-def step(number: int, relied_on: list[str], *, correction: bool = False) -> dict[str, Any]:
-    return {"step": number, "action_text": f"action {number}", "relied_on": relied_on, "correction": correction}
+def step(
+    number: int,
+    relied_on: list[str],
+    *,
+    performed: str | None = None,
+    correction: bool = False,
+) -> dict[str, Any]:
+    """One recorded step. ``performed`` names the declared action the step carried out."""
+
+    return {
+        "step": number,
+        "action_text": f"action {number}",
+        "relied_on": relied_on,
+        "performed_action_id": performed,
+        "correction": correction,
+    }
 
 
 def fabricated_score(
@@ -129,7 +146,7 @@ def fabricated_score(
 def test_a_clean_recovery_is_not_a_finding(catalog: TaskCatalog) -> None:
     task = catalog.require("t-audit")
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    score = score_attempt(task, context, recorded(step(1, ["h1", "h2"])))
+    score = score_attempt(task, context, recorded(step(1, ["h1", "h2"], performed="c1")))
 
     assert score.task_success is True
     assert classify_failure(task, context, score) is None
@@ -162,6 +179,27 @@ def test_a_dropped_required_state_item_is_budget_truncation(catalog: TaskCatalog
     assert classify_failure(task, context, score) == BUDGET_TRUNCATION
 
 
+def test_dropped_transcript_evidence_is_budget_truncation(catalog: TaskCatalog) -> None:
+    """A transcript arm's dropped turn is a dropped fact, not an absent context."""
+
+    task = catalog.require("t-audit")
+    ceiling = budget_through(task, FULL_TRANSCRIPT, "turn:2")
+    context = context_for(catalog, "t-audit", FULL_TRANSCRIPT, max_bytes=ceiling)
+    score = score_attempt(task, context, recorded(step(1, ["h1"])))
+
+    # Every fact the next action needs had its evidence in a dropped turn, so the
+    # loss belongs to the byte ceiling rather than to the window the arm selected.
+    assert "turn:7" in context.dropped_item_ids
+    assert "turn:8" in context.dropped_item_ids
+    assert classify_failure(task, context, score) == BUDGET_TRUNCATION
+
+    analysis = analyse_task_outcomes(
+        task,
+        [ArmOutcome(task.task_id, FULL_TRANSCRIPT.arm_id, HOST_A, context, score)],
+    )
+    assert "turn" in analysis.findings[0].detail
+
+
 def test_required_state_never_delivered_is_context_absent(catalog: TaskCatalog) -> None:
     task = catalog.require("t-audit")
     context = context_for(catalog, "t-audit", INFORMAL_SUMMARY)
@@ -174,7 +212,7 @@ def test_required_state_never_delivered_is_context_absent(catalog: TaskCatalog) 
 def test_continuing_from_a_superseded_fact_is_stale_state(catalog: TaskCatalog) -> None:
     task = catalog.require("t-audit")
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    score = score_attempt(task, context, recorded(step(1, ["o1", "h1", "h2"])))
+    score = score_attempt(task, context, recorded(step(1, ["o1", "h1", "h2"], performed="c1")))
 
     assert score.incorrect_assumptions == 1
     assert classify_failure(task, context, score) == STALE_STATE
@@ -186,7 +224,12 @@ def test_relying_on_unavailable_evidence_is_an_unverifiable_claim(catalog: TaskC
     score = score_attempt(
         task,
         context,
-        recorded(step(1, ["g3"]), step(2, ["g1", "g2"]), task_id="t-doc", arm_id=ROLLOVER_HANDOFF.arm_id),
+        recorded(
+            step(1, ["g3"]),
+            step(2, ["g1", "g2"], performed="b1"),
+            task_id="t-doc",
+            arm_id=ROLLOVER_HANDOFF.arm_id,
+        ),
     )
 
     assert score.unverifiable_claims == 1
@@ -199,7 +242,11 @@ def test_relying_on_a_fact_the_context_dropped_is_missing_evidence(catalog: Task
     score = score_attempt(
         task,
         context,
-        recorded(step(1, ["h1", "h2"]), step(2, ["h3"]), arm_id=COMPACTED_TRANSCRIPT.arm_id),
+        recorded(
+            step(1, ["h1", "h2"], performed="c1"),
+            step(2, ["h3"]),
+            arm_id=COMPACTED_TRANSCRIPT.arm_id,
+        ),
     )
 
     assert score.task_success is True
@@ -212,7 +259,7 @@ def test_relying_on_a_fact_the_context_dropped_is_missing_evidence(catalog: Task
 def test_delivering_every_fact_without_recovery_is_a_vague_next_action(catalog: TaskCatalog) -> None:
     task = catalog.require("t-audit")
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
-    score = score_attempt(task, context, recorded(step(1, ["h1"]), step(2, ["h1"])))
+    score = score_attempt(task, context, recorded(step(1, ["h1", "h2"])))
 
     assert score.task_success is False
     assert (score.incorrect_assumptions, score.missing_evidence, score.unverifiable_claims) == (0, 0, 0)
@@ -381,7 +428,7 @@ def test_the_aggregate_counts_findings_by_class_and_lists_unrecorded_combination
                 FULL_TRANSCRIPT.arm_id,
                 HOST_A,
                 full_context,
-                score_attempt(task, full_context, recorded(step(1, ["h1", "h2"]))),
+                score_attempt(task, full_context, recorded(step(1, ["h1", "h2"], performed="c1"))),
             ),
             ArmOutcome(
                 "t-audit",

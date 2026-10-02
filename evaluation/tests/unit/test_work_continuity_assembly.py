@@ -42,6 +42,7 @@ from powercontext_eval.benchmarks.work_continuity.assembly import (
     assemble_context,
 )
 from powercontext_eval.benchmarks.work_continuity.catalog import ContinuationTask, TaskCatalog
+from powercontext_eval.benchmarks.work_continuity.quality import NEXT_ACTION_REQUIREMENT
 
 GENEROUS_BUDGET = 16_000
 
@@ -95,12 +96,46 @@ def test_a_transcript_method_never_carries_a_next_action(audit: ContinuationTask
 
 
 def test_only_the_treatment_attaches_a_rollover_quality_report(audit: ContinuationTask) -> None:
-    assert assemble_context(audit, FULL_TRANSCRIPT, max_bytes=GENEROUS_BUDGET).quality is None
+    transcript = assemble_context(audit, FULL_TRANSCRIPT, max_bytes=GENEROUS_BUDGET)
+
+    assert transcript.quality is None
+    assert transcript.draft_quality is None
 
     context = assemble_context(audit, ROLLOVER_HANDOFF, max_bytes=GENEROUS_BUDGET)
 
     assert context.quality is not None
     assert context.quality.satisfied is True
+    assert context.draft_quality is not None
+    assert context.draft_quality.satisfied is True
+
+
+def test_a_ceiling_that_empties_the_context_cannot_certify_it(audit: ContinuationTask) -> None:
+    """The quality verdict must describe what was delivered, not what was drafted.
+
+    Rating the draft let a one-byte ceiling report content that satisfies RFC 1783
+    while the session received a truncated header and nothing else.
+    """
+
+    context = assemble_context(audit, ROLLOVER_HANDOFF, max_bytes=1)
+
+    assert context.delivered_item_ids == ("header",)
+    assert context.quality is not None
+    assert context.quality.satisfied is False
+    assert context.draft_quality is not None
+    assert context.draft_quality.satisfied is True
+
+
+def test_a_ceiling_that_drops_only_the_next_action_fails_the_next_action_requirement(
+    audit: ContinuationTask,
+) -> None:
+    ceiling = budget_through(audit, ROLLOVER_HANDOFF, "state:h3")
+    context = assemble_context(audit, ROLLOVER_HANDOFF, max_bytes=ceiling)
+
+    assert "next_action" in context.dropped_item_ids
+    assert context.carries_next_action is False
+    assert context.quality is not None
+    assert NEXT_ACTION_REQUIREMENT in context.quality.violations_by_requirement
+    assert context.quality.satisfied is False
 
 
 def test_a_fact_counts_as_delivered_when_the_turn_it_comes_from_is_delivered(audit: ContinuationTask) -> None:

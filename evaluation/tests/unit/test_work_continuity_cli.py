@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from typer.testing import CliRunner
-from work_continuity_fixtures import analysis_lock, write_attempts
+from work_continuity_fixtures import analysis_lock, context_digest, write_attempts
 
 from powercontext_eval.benchmarks.work_continuity.arms import (
     COMPACTED_TRANSCRIPT,
@@ -39,24 +39,39 @@ from powercontext_eval.cli import app
 HOST = "fixture-host"
 
 
-def step(number: int, relied_on: list[str]) -> dict[str, Any]:
-    return {"step": number, "action_text": f"action {number}", "relied_on": relied_on}
+def step(number: int, relied_on: list[str], *, performed: str | None = None) -> dict[str, Any]:
+    return {
+        "step": number,
+        "action_text": f"action {number}",
+        "relied_on": relied_on,
+        "performed_action_id": performed,
+    }
 
 
-def attempt(task_id: str, arm_id: str, *steps: dict[str, Any]) -> dict[str, Any]:
-    return {"task_id": task_id, "arm_id": arm_id, "host": HOST, "steps": list(steps)}
+def attempt(lock: Path, task_id: str, arm_id: str, *steps: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "task_id": task_id,
+        "arm_id": arm_id,
+        "host": HOST,
+        "host_revision": f"{HOST}@1",
+        "model": "declared-model",
+        "context_sha256": context_digest(lock, task_id, arm_id),
+        "steps": list(steps),
+    }
+    entry.update(overrides)
+    return entry
 
 
-def full_coverage() -> list[dict[str, Any]]:
+def full_coverage(lock: Path) -> list[dict[str, Any]]:
     return [
-        attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
-        attempt("t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
-        attempt("t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
-        attempt("t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"])),
+        attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
+        attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
+        attempt(lock, "t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
+        attempt(lock, "t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"], performed="b1")),
     ]
 
 
@@ -90,7 +105,7 @@ def test_validate_describes_the_pinned_inputs_without_writing_anything(tmp_path:
 
 def test_validate_also_checks_recorded_attempts(tmp_path: Path) -> None:
     lock = analysis_lock(tmp_path)
-    attempts = write_attempts(tmp_path, full_coverage())
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
 
     body = payload(
         CliRunner().invoke(
@@ -99,8 +114,12 @@ def test_validate_also_checks_recorded_attempts(tmp_path: Path) -> None:
         )
     )
 
-    assert body["attempt_count"] == len(full_coverage())
+    assert body["attempt_count"] == len(full_coverage(lock))
     assert body["hosts"] == [HOST]
+    # The protocol and the execution configuration are surfaced, not only validated.
+    assert body["recording_protocol"]["task_lock_sha256"] == body["task_lock_sha256"]
+    assert body["recording_protocol"]["assembly_max_bytes"] == 16_000
+    assert body["execution_configuration"] == [{"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}]
 
 
 def test_validate_reports_an_unusable_lock_without_a_traceback(tmp_path: Path) -> None:
@@ -113,7 +132,9 @@ def test_validate_reports_an_unusable_lock_without_a_traceback(tmp_path: Path) -
 
 def test_validate_rejects_an_attempts_artifact_that_cannot_be_scored(tmp_path: Path) -> None:
     lock = analysis_lock(tmp_path)
-    attempts = write_attempts(tmp_path, [attempt("t-audit", "not-an-arm", step(1, ["h1"]))])
+    entry = attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1"]))
+    entry["arm_id"] = "nope"
+    attempts = write_attempts(tmp_path, [entry], lock=lock)
 
     result = CliRunner().invoke(
         app, ["work-continuity", "validate", "--task-lock", str(lock), "--attempts", str(attempts)]
@@ -125,7 +146,7 @@ def test_validate_rejects_an_attempts_artifact_that_cannot_be_scored(tmp_path: P
 
 def test_run_assembles_scores_and_writes_one_run_directory(tmp_path: Path) -> None:
     lock = analysis_lock(tmp_path)
-    attempts = write_attempts(tmp_path, full_coverage())
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
     output = tmp_path / "run"
 
     body = payload(
@@ -250,6 +271,36 @@ def test_run_refuses_to_reuse_an_output_directory(tmp_path: Path) -> None:
     assert result.exit_code == 1
     assert "Work-continuity run failed" in result.output
     assert "already exists" in result.output
+
+
+def test_run_refuses_to_rescore_recordings_under_a_smaller_ceiling(tmp_path: Path) -> None:
+    """The reproduction from review, driven through the CLI entry point."""
+
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    output = tmp_path / "tiny"
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "work-continuity",
+            "run",
+            "--task-lock",
+            str(lock),
+            "--attempts",
+            str(attempts),
+            "--output-dir",
+            str(output),
+            "--run-id",
+            "tiny",
+            "--max-bytes",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "made under a 16000 byte ceiling" in result.output
+    assert not output.exists()
 
 
 def test_run_rejects_an_unknown_arm_as_a_usage_error(tmp_path: Path) -> None:

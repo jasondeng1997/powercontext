@@ -27,7 +27,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from work_continuity_fixtures import analysis_lock, write_attempts
+from work_continuity_fixtures import (
+    analysis_lock,
+    audit_task,
+    context_digest,
+    documentation_task,
+    write_attempts,
+    write_lock,
+)
 
 from powercontext_eval.benchmarks.work_continuity.analysis import FAILURE_CLASSES, NO_RECORDING
 from powercontext_eval.benchmarks.work_continuity.arms import (
@@ -53,26 +60,41 @@ HOST = "fixture-host"
 ARMS = (FULL_TRANSCRIPT, COMPACTED_TRANSCRIPT, INFORMAL_SUMMARY, ROLLOVER_HANDOFF)
 
 
-def step(number: int, relied_on: list[str]) -> dict[str, Any]:
-    return {"step": number, "action_text": f"action {number}", "relied_on": relied_on}
+def step(number: int, relied_on: list[str], *, performed: str | None = None) -> dict[str, Any]:
+    return {
+        "step": number,
+        "action_text": f"action {number}",
+        "relied_on": relied_on,
+        "performed_action_id": performed,
+    }
 
 
-def attempt(task_id: str, arm_id: str, *steps: dict[str, Any], host: str = HOST) -> dict[str, Any]:
-    return {"task_id": task_id, "arm_id": arm_id, "host": host, "steps": list(steps)}
+def attempt(lock: Path, task_id: str, arm_id: str, *steps: dict[str, Any], **overrides: Any) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "task_id": task_id,
+        "arm_id": arm_id,
+        "host": HOST,
+        "host_revision": f"{HOST}@1",
+        "model": "declared-model",
+        "context_sha256": context_digest(lock, task_id, arm_id),
+        "steps": list(steps),
+    }
+    entry.update(overrides)
+    return entry
 
 
-def attempts_entries() -> list[dict[str, Any]]:
+def attempts_entries(lock: Path) -> list[dict[str, Any]]:
     """Cover every arm on both tasks, with one deliberate treatment failure."""
 
     return [
-        attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
-        attempt("t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
-        attempt("t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
-        attempt("t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"])),
+        attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
+        attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
+        attempt(lock, "t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
+        attempt(lock, "t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"], performed="b1")),
     ]
 
 
@@ -82,12 +104,12 @@ def lock(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def attempts(tmp_path: Path) -> Path:
-    return write_attempts(tmp_path, attempts_entries())
+def attempts(tmp_path: Path, lock: Path) -> Path:
+    return write_attempts(tmp_path, attempts_entries(lock), lock=lock)
 
 
-def recorded_run(lock: Path, attempts: Path) -> WorkContinuityRun:
-    return run_work_continuity(task_lock=lock, run_id="run-1", attempts_path=attempts)
+def recorded_run(lock: Path, attempts: Path, **overrides: Any) -> WorkContinuityRun:
+    return run_work_continuity(task_lock=lock, run_id="run-1", attempts_path=attempts, **overrides)
 
 
 def summary_arms(run: WorkContinuityRun) -> dict[str, dict[str, Any]]:
@@ -110,12 +132,12 @@ def nested(block: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
-def write_isolated_attempts(tmp_path: Path, name: str, entries: list[dict[str, Any]]) -> Path:
+def write_isolated_attempts(tmp_path: Path, lock: Path, name: str, entries: list[dict[str, Any]]) -> Path:
     """Write an attempts artifact into its own directory so fixtures never collide."""
 
     directory = tmp_path / name
     directory.mkdir()
-    return write_attempts(directory, entries)
+    return write_attempts(directory, entries, lock=lock)
 
 
 def test_an_assembly_only_run_needs_no_attempts(lock: Path) -> None:
@@ -135,7 +157,7 @@ def test_a_recorded_run_classifies_itself_as_incomplete_on_purpose(lock: Path, a
     assert run.classification != "complete-benchmark-result"
     assert run.analysis is not None
     assert run.hosts == (HOST,)
-    assert len(run.scores) == len(attempts_entries())
+    assert len(run.scores) == len(attempts_entries(lock))
 
 
 def test_the_manifest_pins_every_input_a_reader_needs_to_reproduce_the_run(lock: Path, attempts: Path) -> None:
@@ -153,17 +175,77 @@ def test_the_manifest_pins_every_input_a_reader_needs_to_reproduce_the_run(lock:
 
     inputs = nested(manifest, "inputs")
     assert nested(inputs, "task_lock")["content_sha256"] == catalog.content_sha256
-    assert nested(inputs, "attempts")["path"] == attempts.name
+    recorded_input = nested(inputs, "attempts")
+    assert recorded_input["path"] == attempts.name
+    assert recorded_input["protocol"] == {
+        "task_set_id": catalog.task_set_id,
+        "task_lock_sha256": catalog.content_sha256,
+        "assembly_max_bytes": 16_000,
+    }
 
     comparable = manifest["comparable_arms"]
     assert isinstance(comparable, list)
     assert [record["id"] for record in comparable] == [arm.arm_id for arm in ARMS]
 
 
+def test_the_run_retains_each_recorded_hosts_execution_configuration(lock: Path, attempts: Path) -> None:
+    """The configuration is kept, not only used to validate, so it can be reported."""
+
+    expected = [{"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}]
+
+    assert recorded_run(lock, attempts).manifest["execution_configuration"] == expected
+    assert run_summary(recorded_run(lock, attempts))["execution_configuration"] == expected
+
+
+def test_a_run_refuses_recordings_made_under_a_different_byte_ceiling(lock: Path, attempts: Path) -> None:
+    """The reproduction from review: reusing a recording under another ceiling.
+
+    Contexts are a deterministic function of the task lock and the byte ceiling, so
+    a recording made at the default ceiling says nothing about a one-byte one. It
+    used to be scored against it anyway, reporting successes for contexts that held
+    a single truncated header.
+    """
+
+    with pytest.raises(WorkContinuityRunError, match="made under a 16000 byte ceiling"):
+        recorded_run(lock, attempts, max_bytes=1)
+
+
+def test_a_run_refuses_recordings_made_against_a_different_task_lock(
+    lock: Path, attempts: Path, tmp_path: Path
+) -> None:
+    other = tmp_path / "other-lock"
+    other.mkdir()
+    revised = audit_task()
+    revised["objective"] = "Audit the retry helper, revised."
+    changed = write_lock(other, [revised, documentation_task()])
+
+    with pytest.raises(WorkContinuityRunError, match="different task lock"):
+        recorded_run(changed, attempts)
+
+
+def test_a_run_refuses_a_recording_bound_to_a_different_context(lock: Path, tmp_path: Path) -> None:
+    entries = [
+        attempt(
+            lock,
+            "t-audit",
+            FULL_TRANSCRIPT.arm_id,
+            step(1, ["h1", "h2"], performed="c1"),
+            context_sha256="b" * 64,
+        )
+    ]
+    path = write_isolated_attempts(tmp_path, lock, "rebound", entries)
+
+    with pytest.raises(WorkContinuityRunError, match="but this run delivers"):
+        run_work_continuity(task_lock=lock, run_id="rebound", attempts_path=path)
+
+
 def test_the_manifest_names_the_ground_truth_it_scored_against(lock: Path, attempts: Path, tmp_path: Path) -> None:
     whole = recorded_run(lock, attempts).manifest["task_evidence_digest"]
     narrow = write_isolated_attempts(
-        tmp_path, "ground-truth", [attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"]))]
+        tmp_path,
+        lock,
+        "ground-truth",
+        [attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1"))],
     )
 
     narrowed = run_work_continuity(
@@ -238,7 +320,7 @@ def test_run_artifacts_are_written_into_a_fresh_directory(lock: Path, attempts: 
     rows = [json.loads(line) for line in artifacts.assembly_path.read_text(encoding="utf-8").splitlines()]
     assert {row["arm_id"] for row in rows} == set(supported_continuation_arm_ids())
     scored = [json.loads(line) for line in artifacts.scores_path.read_text(encoding="utf-8").splitlines()]
-    assert len(scored) == len(attempts_entries())
+    assert len(scored) == len(attempts_entries(lock))
 
 
 def test_writing_run_artifacts_refuses_to_overwrite_an_existing_directory(
@@ -271,7 +353,11 @@ def test_a_run_refuses_attempts_that_name_an_arm_it_did_not_select(lock: Path, a
 
 
 def test_an_unrecorded_combination_is_a_recording_gap_rather_than_a_failure(lock: Path, tmp_path: Path) -> None:
-    partial = write_attempts(tmp_path, [attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"]))])
+    partial = write_attempts(
+        tmp_path,
+        [attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1"))],
+        lock=lock,
+    )
 
     run = run_work_continuity(task_lock=lock, run_id="partial", attempts_path=partial)
     assert run.analysis is not None
@@ -286,7 +372,10 @@ def test_an_unrecorded_combination_is_a_recording_gap_rather_than_a_failure(lock
 
 def test_selecting_one_arm_and_one_task_narrows_the_run(lock: Path, tmp_path: Path) -> None:
     narrow = write_isolated_attempts(
-        tmp_path, "narrow", [attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"]))]
+        tmp_path,
+        lock,
+        "narrow",
+        [attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1"))],
     )
 
     run = run_work_continuity(

@@ -46,10 +46,12 @@ class StepScore:
     step: int
     action_text: str
     relied_on: tuple[str, ...]
+    performed_action_id: str | None
     superseded_reliance: tuple[str, ...]
     undelivered_reliance: tuple[str, ...]
     unavailable_reliance: tuple[str, ...]
     correction: bool
+    performs_expected_action: bool
     is_recovery: bool
 
 
@@ -125,16 +127,24 @@ def score_attempt(
     for step in attempt.steps:
         relied = set(step.relied_on)
         undelivered = relied & (set(task.required_fact_ids) - delivered - unavailable)
+        superseded = tuple(fact for fact in task.obsolete_fact_ids if fact in relied)
+        performs = step.performed_action_id == task.expected_next_action.action_id
         steps.append(
             StepScore(
                 step=step.step,
                 action_text=step.action_text,
                 relied_on=step.relied_on,
-                superseded_reliance=tuple(fact for fact in task.obsolete_fact_ids if fact in relied),
+                performed_action_id=step.performed_action_id,
+                superseded_reliance=superseded,
                 undelivered_reliance=tuple(fact for fact in task.required_fact_ids if fact in undelivered),
                 unavailable_reliance=tuple(fact for fact in context.unavailable_fact_ids if fact in relied),
                 correction=step.correction,
-                is_recovery=expected <= relied,
+                performs_expected_action=performs,
+                # Reading the facts an action depends on is not continuing the
+                # work, and continuing from a replaced plan is not continuing the
+                # declared one. Only a step that does the expected action, on
+                # state that is still current, counts as a recovery.
+                is_recovery=expected <= relied and not superseded and performs,
             )
         )
     recoveries = [scored.step for scored in steps if scored.is_recovery]

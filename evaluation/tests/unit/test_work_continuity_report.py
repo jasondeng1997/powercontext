@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from work_continuity_fixtures import analysis_lock, write_attempts
+from work_continuity_fixtures import analysis_lock, context_digest, write_attempts
 
 from powercontext_eval.benchmarks.work_continuity.arms import (
     COMPACTED_TRANSCRIPT,
@@ -49,33 +49,46 @@ from powercontext_eval.benchmarks.work_continuity.runner import WorkContinuityRu
 HOST = "fixture-host"
 
 
-def step(number: int, relied_on: list[str]) -> dict[str, Any]:
-    return {"step": number, "action_text": f"action {number}", "relied_on": relied_on}
+def step(number: int, relied_on: list[str], *, performed: str | None = None) -> dict[str, Any]:
+    return {
+        "step": number,
+        "action_text": f"action {number}",
+        "relied_on": relied_on,
+        "performed_action_id": performed,
+    }
 
 
-def attempt(task_id: str, arm_id: str, *steps: dict[str, Any]) -> dict[str, Any]:
-    return {"task_id": task_id, "arm_id": arm_id, "host": HOST, "steps": list(steps)}
+def attempt(lock: Path, task_id: str, arm_id: str, *steps: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "task_id": task_id,
+        "arm_id": arm_id,
+        "host": HOST,
+        "host_revision": f"{HOST}@1",
+        "model": "declared-model",
+        "context_sha256": context_digest(lock, task_id, arm_id),
+        "steps": list(steps),
+    }
 
 
-def full_coverage() -> list[dict[str, Any]]:
+def full_coverage(lock: Path) -> list[dict[str, Any]]:
     """Every arm on both tasks, with the treatment failing only on t-audit."""
 
     return [
-        attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"])),
-        attempt("t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
-        attempt("t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
-        attempt("t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"])),
-        attempt("t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
-        attempt("t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"])),
+        attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", COMPACTED_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-audit", INFORMAL_SUMMARY.arm_id, step(1, ["h2"])),
+        attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, step(1, ["h1"])),
+        attempt(lock, "t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", COMPACTED_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+        attempt(lock, "t-doc", INFORMAL_SUMMARY.arm_id, step(1, ["g2"])),
+        attempt(lock, "t-doc", ROLLOVER_HANDOFF.arm_id, step(1, ["g1", "g2"], performed="b1")),
     ]
 
 
 @pytest.fixture
 def recorded(tmp_path: Path) -> WorkContinuityRun:
     lock = analysis_lock(tmp_path)
-    attempts = write_attempts(tmp_path, full_coverage())
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
     return run_work_continuity(task_lock=lock, run_id="report-run", attempts_path=attempts)
 
 
@@ -194,7 +207,11 @@ def test_recommendations_use_failure_classes_and_leave_the_recording_gap_out(
 
 def test_a_recording_gap_produces_no_recommendation(tmp_path: Path) -> None:
     lock = analysis_lock(tmp_path)
-    partial = write_attempts(tmp_path, [attempt("t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"]))])
+    partial = write_attempts(
+        tmp_path,
+        [attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, step(1, ["h1", "h2"], performed="c1"))],
+        lock=lock,
+    )
 
     payload = report_payload(run_work_continuity(task_lock=lock, run_id="partial", attempts_path=partial))
     failure = block(payload, "failure_analysis")
@@ -214,6 +231,52 @@ def test_an_assembly_only_report_says_why_no_outcome_exists(assembly_only: WorkC
     assert "no recorded attempts were supplied" in str(failure["reason"])
     assert failure["findings"] == []
     assert "assembly only, no recorded attempt" in markdown
+
+
+def test_an_assembly_only_report_does_not_claim_unmeasured_coverage_or_comparison(
+    assembly_only: WorkContinuityRun,
+) -> None:
+    """Empty coverage and an empty comparison are absences, not clean bills of health."""
+
+    markdown = render_markdown(report_payload(assembly_only))
+
+    assert "Recording coverage is unavailable" in markdown
+    assert "No comparison was performed" in markdown
+    assert "Every selected task and method has a recorded attempt." not in markdown
+    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+    assert "Findings by class: unavailable" in markdown
+
+
+def test_a_recorded_run_reports_its_coverage_and_comparison(recorded: WorkContinuityRun) -> None:
+    markdown = render_markdown(report_payload(recorded))
+
+    assert "Every selected task and method has a recorded attempt." in markdown
+    assert "Recording coverage is unavailable" not in markdown
+    assert "No comparison was performed" not in markdown
+
+
+def test_the_report_separates_delivered_quality_from_draft_quality(recorded: WorkContinuityRun) -> None:
+    methods = {method["arm_id"]: method for method in rows(report_payload(recorded), "methods")}
+    treatment = block(methods[TREATMENT_ARM_ID], "context_quality")
+
+    assert treatment["checked_task_count"] == 2
+    assert treatment["satisfied_task_count"] == 2
+    assert treatment["draft_checked_task_count"] == 2
+    assert treatment["draft_satisfied_task_count"] == 2
+    # A transcript method carries no rollover draft, so nothing is checked for it.
+    assert block(methods[FULL_TRANSCRIPT.arm_id], "context_quality")["checked_task_count"] == 0
+    assert "## Delivered context quality" in render_markdown(report_payload(recorded))
+
+
+def test_the_report_renders_the_recorded_execution_configuration(recorded: WorkContinuityRun) -> None:
+    payload = report_payload(recorded)
+
+    assert payload["execution_configuration"] == [
+        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model"}
+    ]
+    markdown = render_markdown(payload)
+    assert "## Recorded execution configuration" in markdown
+    assert "declared-model" in markdown
 
 
 def test_the_report_writes_json_and_markdown_together(recorded: WorkContinuityRun, tmp_path: Path) -> None:

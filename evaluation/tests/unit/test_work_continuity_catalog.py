@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 from work_continuity_fixtures import (
+    ATTEMPTS_SCHEMA,
+    attempts_protocol,
     coding_task,
     documentation_task,
     shipped_locks_dir,
@@ -26,6 +28,8 @@ from work_continuity_fixtures import (
     write_lock,
 )
 
+from powercontext_eval.benchmarks.work_continuity.arms import get_continuation_arm
+from powercontext_eval.benchmarks.work_continuity.assembly import assemble_context
 from powercontext_eval.benchmarks.work_continuity.attempts import AttemptInputError, load_attempts
 from powercontext_eval.benchmarks.work_continuity.catalog import (
     TaskCatalog,
@@ -160,89 +164,215 @@ def test_catalog_rejects_a_blank_lock(tmp_path: Path) -> None:
 
 
 def test_attempts_load_and_group_by_host(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
     path = write_attempts(
         tmp_path,
-        [valid_attempt(), valid_attempt(host="second-host"), valid_attempt(arm_id="full-transcript-v1")],
+        [
+            valid_attempt(lock),
+            valid_attempt(lock, host="second-host"),
+            valid_attempt(lock, arm_id="full-transcript-v1"),
+        ],
+        lock=lock,
     )
 
     attempts = load_attempts(path, catalog=catalog)
 
     assert attempts.hosts == ("fixture-host", "second-host")
+    assert attempts.configurations == (("fixture-host@1", "fixture-model"),)  # retained, not only validated
     assert len(attempts.for_task_and_arm("t-coding", "full-transcript-v1")) == 1
     assert attempts.for_task_and_arm("t-coding", "informal-summary-v1") == ()
 
 
 @pytest.mark.parametrize(
-    ("entry", "message"),
+    ("overrides", "message"),
     [
-        (valid_attempt(task_id="nope"), "unknown work-continuity task"),
-        (valid_attempt(arm_id="not-an-arm"), "unknown continuation arm"),
-        (valid_attempt(host="   "), "host must be a non-empty string"),
-        (valid_attempt(steps=[]), "must record at least one step"),
+        ({"task_id": "nope"}, "unknown work-continuity task"),
+        ({"arm_id": "not-an-arm"}, "unknown continuation arm"),
+        ({"host": "   "}, "host must be a non-empty string"),
+        ({"host_revision": ""}, "host_revision must be a non-empty string"),
+        ({"model": " "}, "model must be a non-empty string"),
+        ({"context_sha256": "not-a-digest"}, "context_sha256 must be a lowercase hex sha256 digest"),
+        ({"steps": []}, "must record at least one step"),
     ],
 )
-def test_attempts_reject_entries_that_cannot_be_scored(tmp_path: Path, entry: dict[str, object], message: str) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
+def test_attempts_reject_entries_that_cannot_be_scored(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entry = valid_attempt(lock, **overrides)
     with pytest.raises(AttemptInputError, match=message):
-        load_attempts(write_attempts(tmp_path, [entry]), catalog=catalog)
+        load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
 
 
 def test_attempts_reject_an_undeclared_fact_reference(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
-    entry = valid_attempt(steps=[{"step": 1, "action_text": "x", "relied_on": ["f1", "f9"]}])
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entry = valid_attempt(lock, steps=[{"step": 1, "action_text": "x", "relied_on": ["f1", "f9"]}])
     with pytest.raises(AttemptInputError, match="relies on undeclared fact 'f9'"):
-        load_attempts(write_attempts(tmp_path, [entry]), catalog=catalog)
+        load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
+
+
+def test_attempts_reject_a_performed_action_the_task_does_not_declare(tmp_path: Path) -> None:
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entry = valid_attempt(
+        lock,
+        steps=[{"step": 1, "action_text": "x", "relied_on": ["f1"], "performed_action_id": "a9"}],
+    )
+    with pytest.raises(AttemptInputError, match="the only action this task declares is 'a1'"):
+        load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
+
+
+def test_attempts_accept_a_step_that_declares_the_expected_action(tmp_path: Path) -> None:
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entry = valid_attempt(
+        lock,
+        steps=[{"step": 1, "action_text": "x", "relied_on": ["f1", "f2"], "performed_action_id": "a1"}],
+    )
+
+    attempts = load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
+
+    assert attempts.attempts[0].steps[0].performed_action_id == "a1"
+
+
+def test_attempts_reject_a_host_that_reports_two_execution_configurations(tmp_path: Path) -> None:
+    """A host whose arms ran on different models cannot support a comparison."""
+
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entries = [
+        valid_attempt(lock, model="model-one"),
+        valid_attempt(lock, arm_id="full-transcript-v1", model="model-two"),
+    ]
+
+    with pytest.raises(AttemptInputError, match="reports more than one execution configuration"):
+        load_attempts(write_attempts(tmp_path, entries, lock=lock), catalog=catalog)
 
 
 def test_attempts_reject_an_out_of_order_step_number(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
     entry = valid_attempt(
+        lock,
         steps=[
             {"step": 1, "action_text": "x", "relied_on": []},
             {"step": 3, "action_text": "y", "relied_on": []},
-        ]
+        ],
     )
     with pytest.raises(AttemptInputError, match="numbered 1..n in order"):
-        load_attempts(write_attempts(tmp_path, [entry]), catalog=catalog)
+        load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
 
 
 def test_attempts_reject_a_duplicate_task_arm_host_triple(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entries = [valid_attempt(lock), valid_attempt(lock)]
     with pytest.raises(AttemptInputError, match="repeat task t-coding arm rollover-handoff-v1"):
-        load_attempts(write_attempts(tmp_path, [valid_attempt(), valid_attempt()]), catalog=catalog)
+        load_attempts(write_attempts(tmp_path, entries, lock=lock), catalog=catalog)
 
 
-def test_attempts_reject_an_unknown_schema_and_accept_the_optional_identity_fields(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
+def test_attempts_reject_an_unknown_schema_and_retain_the_declared_identity(tmp_path: Path) -> None:
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
     path = tmp_path / "attempts.json"
     path.write_text(
-        json.dumps({"schema": "powercontext.work-continuity-attempts.v9", "attempts": [valid_attempt()]}),
+        json.dumps(
+            {
+                "schema": "powercontext.work-continuity-attempts.v9",
+                "protocol": attempts_protocol(lock),
+                "attempts": [valid_attempt(lock)],
+            }
+        ),
         encoding="utf-8",
     )
     with pytest.raises(AttemptInputError, match="schema is unsupported"):
         load_attempts(path, catalog=catalog)
 
-    accepted = load_attempts(write_attempts(tmp_path, [valid_attempt(model="m", host_revision="r")]), catalog=catalog)
+    accepted = load_attempts(
+        write_attempts(tmp_path, [valid_attempt(lock, model="m", host_revision="r")], lock=lock),
+        catalog=catalog,
+    )
     assert accepted.attempts[0].model == "m"
     assert accepted.attempts[0].host_revision == "r"
+    assert accepted.attempts[0].configuration == ("r", "m")
+    assert accepted.configurations == (("r", "m"),)
+
+
+def test_attempts_reject_an_artifact_without_a_protocol(tmp_path: Path) -> None:
+    """A recording that does not pin a protocol cannot be bound to any context."""
+
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    path = tmp_path / "attempts.json"
+    path.write_text(
+        json.dumps({"schema": ATTEMPTS_SCHEMA, "attempts": [valid_attempt(lock)]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AttemptInputError, match="must contain only schema, protocol, and attempts"):
+        load_attempts(path, catalog=catalog)
+
+
+@pytest.mark.parametrize(
+    ("protocol", "message"),
+    [
+        ({"task_set_id": "", "task_lock_sha256": "a" * 64, "assembly_max_bytes": 1}, "task_set_id"),
+        ({"task_set_id": "s", "task_lock_sha256": "zz", "assembly_max_bytes": 1}, "task_lock_sha256"),
+        ({"task_set_id": "s", "task_lock_sha256": "a" * 64, "assembly_max_bytes": 0}, "assembly_max_bytes"),
+    ],
+)
+def test_attempts_reject_a_malformed_protocol(tmp_path: Path, protocol: dict[str, object], message: str) -> None:
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    path = tmp_path / "attempts.json"
+    path.write_text(
+        json.dumps({"schema": ATTEMPTS_SCHEMA, "protocol": protocol, "attempts": [valid_attempt(lock)]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AttemptInputError, match=message):
+        load_attempts(path, catalog=catalog)
 
 
 def test_attempts_reject_a_step_without_a_non_empty_action_text(tmp_path: Path) -> None:
-    catalog = TaskCatalog.load(standard_lock(tmp_path))
-    entry = valid_attempt(steps=[{"step": 1, "action_text": "  ", "relied_on": []}])
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entry = valid_attempt(lock, steps=[{"step": 1, "action_text": "  ", "relied_on": []}])
     with pytest.raises(AttemptInputError, match="action_text must be a non-empty string"):
-        load_attempts(write_attempts(tmp_path, [entry]), catalog=catalog)
+        load_attempts(write_attempts(tmp_path, [entry], lock=lock), catalog=catalog)
 
 
 def test_shipped_fixture_lock_and_attempts_validate() -> None:
     """The checked-in fixture must stay loadable and internally consistent."""
 
     locks = shipped_locks_dir()
-    catalog = TaskCatalog.load(locks / "work-continuity-v1.tasks.json")
+    lock = locks / "work-continuity-v1.tasks.json"
+    catalog = TaskCatalog.load(lock)
     attempts = load_attempts(locks / "work-continuity-v1.attempts-fixture.json", catalog=catalog)
 
     assert len(catalog.tasks) >= 6
     assert any(task.unavailable_evidence for task in catalog.tasks.values())
     assert any(task.obsolete_facts for task in catalog.tasks.values())
     assert len(attempts.attempts) == len(catalog.tasks) * 4 * len(attempts.hosts)
+    assert attempts.protocol.task_lock_sha256 == catalog.content_sha256
+    assert attempts.protocol.task_set_id == catalog.task_set_id
+
+
+def test_shipped_fixture_binds_every_recording_to_the_context_it_names() -> None:
+    """The fixture is only reusable with the protocol and contexts it was made for."""
+
+    locks = shipped_locks_dir()
+    lock = locks / "work-continuity-v1.tasks.json"
+    catalog = TaskCatalog.load(lock)
+    attempts = load_attempts(locks / "work-continuity-v1.attempts-fixture.json", catalog=catalog)
+
+    for attempt in attempts.attempts:
+        context = assemble_context(
+            catalog.require(attempt.task_id),
+            get_continuation_arm(attempt.arm_id),
+            max_bytes=attempts.protocol.assembly_max_bytes,
+        )
+        assert attempt.context_sha256 == context.content_sha256

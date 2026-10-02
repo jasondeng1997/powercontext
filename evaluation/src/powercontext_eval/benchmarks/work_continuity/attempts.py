@@ -20,9 +20,17 @@ recording before it is scored. A recorder maps each step onto the task's declare
 fact ids, so scoring stays exact instead of depending on text matching against
 free-form model output.
 
-Validation is fail-closed: an attempt that names an undeclared fact id, an
-unknown task or arm, or a malformed step is rejected rather than scored, because
-a silently dropped reference would understate every conflict metric.
+A recording is evidence about one exact context delivered under one exact
+protocol, so the artifact declares both. The protocol names the task lock and the
+byte ceiling that produced the contexts, and every attempt carries the digest of
+the context it actually received. Without that binding a recording made under one
+protocol could be scored against a context assembled under another, and the
+resulting numbers would describe neither.
+
+Validation is fail-closed: an attempt that names an undeclared fact id or action
+id, an unknown task or arm, an inconsistent host configuration, or a malformed
+step is rejected rather than scored, because a silently dropped reference would
+understate every conflict metric.
 """
 
 from __future__ import annotations
@@ -49,37 +57,68 @@ class AttemptEnvironmentError(AttemptInputError):
 
 
 @dataclass(frozen=True)
+class AttemptProtocol:
+    """The protocol one recording was made under.
+
+    The task lock and the byte ceiling together determine every assembled
+    context, so pinning them pins what the recording is evidence about.
+    """
+
+    task_set_id: str
+    task_lock_sha256: str
+    assembly_max_bytes: int
+
+
+@dataclass(frozen=True)
 class RecordedStep:
-    """One action a fresh session took, with the declared facts it relied on."""
+    """One action a fresh session took, with the declared facts it relied on.
+
+    ``performed_action_id`` is set only on a step that claims to have carried out
+    the task's declared next action. Reading the facts the action depends on is
+    not the same as performing it, so the two are recorded separately and only the
+    latter can be a recovery.
+    """
 
     step: int
     action_text: str
     relied_on: tuple[str, ...]
-    correction: bool
+    performed_action_id: str | None = None
+    correction: bool = False
 
 
 @dataclass(frozen=True)
 class RecordedAttempt:
-    """One recorded continuation attempt for one task under one method."""
+    """One recorded continuation attempt for one task under one method.
+
+    ``host_revision`` and ``model`` are the execution configuration the attempt
+    ran under. They are required because a comparison that ignores them would
+    attribute a configuration difference to the continuation method.
+    """
 
     task_id: str
     arm_id: str
     host: str
-    host_revision: str | None
-    model: str | None
+    host_revision: str
+    model: str
+    context_sha256: str
     steps: tuple[RecordedStep, ...]
 
     @property
     def key(self) -> tuple[str, str, str]:
         return (self.task_id, self.arm_id, self.host)
 
+    @property
+    def configuration(self) -> tuple[str, str]:
+        return (self.host_revision, self.model)
+
 
 @dataclass(frozen=True)
 class AttemptSet:
-    """Validated recorded attempts for one task catalog."""
+    """Validated recorded attempts for one task catalog and protocol."""
 
     path: Path
     content_sha256: str
+    protocol: AttemptProtocol
     attempts: tuple[RecordedAttempt, ...]
 
     def for_task_and_arm(self, task_id: str, arm_id: str) -> tuple[RecordedAttempt, ...]:
@@ -92,6 +131,17 @@ class AttemptSet:
     @property
     def keys(self) -> tuple[tuple[str, str, str], ...]:
         return tuple(attempt.key for attempt in self.attempts)
+
+    @property
+    def configurations(self) -> tuple[tuple[str, str], ...]:
+        """Return the distinct execution configurations, without host names.
+
+        Two runs may be compared when they ran the same configurations; the host
+        name itself is a declared dimension of this benchmark, but the model and
+        host revision are not.
+        """
+
+        return tuple(sorted({attempt.configuration for attempt in self.attempts}))
 
 
 def load_attempts(path: Path, *, catalog: TaskCatalog) -> AttemptSet:
@@ -108,10 +158,11 @@ def load_attempts(path: Path, *, catalog: TaskCatalog) -> AttemptSet:
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise AttemptInputError("Work-continuity attempts are not valid UTF-8 JSON") from error
-    if not isinstance(value, dict) or set(value) != {"schema", "attempts"}:
-        raise AttemptInputError("Work-continuity attempts must contain only schema and attempts")
+    if not isinstance(value, dict) or set(value) != {"schema", "protocol", "attempts"}:
+        raise AttemptInputError("Work-continuity attempts must contain only schema, protocol, and attempts")
     if value["schema"] != ATTEMPTS_SCHEMA:
         raise AttemptInputError("Work-continuity attempts schema is unsupported")
+    protocol = _protocol(value["protocol"])
     raw_attempts = value["attempts"]
     if not isinstance(raw_attempts, list) or not raw_attempts:
         raise AttemptInputError("Work-continuity attempts must contain at least one attempt")
@@ -124,11 +175,46 @@ def load_attempts(path: Path, *, catalog: TaskCatalog) -> AttemptSet:
             raise AttemptInputError(f"Work-continuity attempts repeat task {task_id} arm {arm_id} host {host!r}")
         seen.add(attempt.key)
         attempts.append(attempt)
+    _require_one_configuration_per_host(attempts)
     return AttemptSet(
         path=resolved,
         content_sha256=hashlib.sha256(raw).hexdigest(),
+        protocol=protocol,
         attempts=tuple(attempts),
     )
+
+
+def _protocol(raw: object) -> AttemptProtocol:
+    protocol = _mapping(raw, "Work-continuity attempts protocol must be an object")
+    required = {"task_set_id", "task_lock_sha256", "assembly_max_bytes"}
+    if set(protocol) != required:
+        raise AttemptInputError(f"Work-continuity attempts protocol must declare exactly {sorted(required)}")
+    max_bytes = protocol["assembly_max_bytes"]
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 1:
+        raise AttemptInputError("Work-continuity attempts protocol assembly_max_bytes must be a positive integer")
+    return AttemptProtocol(
+        task_set_id=_text(protocol["task_set_id"], "protocol task_set_id"),
+        task_lock_sha256=_sha256(protocol["task_lock_sha256"], "protocol task_lock_sha256"),
+        assembly_max_bytes=max_bytes,
+    )
+
+
+def _require_one_configuration_per_host(attempts: list[RecordedAttempt]) -> None:
+    """Reject a host that reports more than one execution configuration.
+
+    Attempts are compared within a host, so a host whose arms ran under different
+    models or host revisions cannot support a comparison: the difference would be
+    attributed to the continuation method.
+    """
+
+    by_host: dict[str, tuple[str, str]] = {}
+    for attempt in attempts:
+        existing = by_host.setdefault(attempt.host, attempt.configuration)
+        if existing != attempt.configuration:
+            raise AttemptInputError(
+                f"Work-continuity host {attempt.host!r} reports more than one execution configuration: "
+                f"{existing[0]!r}/{existing[1]!r} and {attempt.host_revision!r}/{attempt.model!r}"
+            )
 
 
 def _mapping(raw: object, error: str) -> dict[str, object]:
@@ -142,13 +228,9 @@ def _mapping(raw: object, error: str) -> dict[str, object]:
 def _attempt(raw: object, index: int, catalog: TaskCatalog) -> RecordedAttempt:
     label = f"attempt {index}"
     raw_attempt = _mapping(raw, f"Work-continuity {label} must be an object")
-    required = {"task_id", "arm_id", "host", "steps"}
-    optional = {"host_revision", "model"}
-    keys = set(raw_attempt)
-    if not required <= keys or keys - required - optional:
-        raise AttemptInputError(
-            f"Work-continuity {label} must declare {sorted(required)} and may add {sorted(optional)}"
-        )
+    required = {"task_id", "arm_id", "host", "host_revision", "model", "context_sha256", "steps"}
+    if set(raw_attempt) != required:
+        raise AttemptInputError(f"Work-continuity {label} must declare exactly {sorted(required)}")
     try:
         task = catalog.require(_text(raw_attempt["task_id"], f"{label} task_id"))
     except WorkContinuityCatalogError as error:
@@ -159,18 +241,31 @@ def _attempt(raw: object, index: int, catalog: TaskCatalog) -> RecordedAttempt:
     except ContinuationArmError as error:
         raise AttemptInputError(str(error)) from None
     declared = set(task.required_fact_ids) | set(task.obsolete_fact_ids)
-    steps = _steps(raw_attempt["steps"], label, task.task_id, declared)
+    steps = _steps(
+        raw_attempt["steps"],
+        label,
+        task.task_id,
+        declared,
+        task.expected_next_action.action_id,
+    )
     return RecordedAttempt(
         task_id=task.task_id,
         arm_id=arm_id,
         host=_text(raw_attempt["host"], f"{label} host"),
-        host_revision=_optional_text(raw_attempt.get("host_revision"), f"{label} host_revision"),
-        model=_optional_text(raw_attempt.get("model"), f"{label} model"),
+        host_revision=_text(raw_attempt["host_revision"], f"{label} host_revision"),
+        model=_text(raw_attempt["model"], f"{label} model"),
+        context_sha256=_sha256(raw_attempt["context_sha256"], f"{label} context_sha256"),
         steps=steps,
     )
 
 
-def _steps(raw: object, label: str, task_id: str, declared: set[str]) -> tuple[RecordedStep, ...]:
+def _steps(
+    raw: object,
+    label: str,
+    task_id: str,
+    declared: set[str],
+    expected_action_id: str,
+) -> tuple[RecordedStep, ...]:
     if not isinstance(raw, list) or not raw:
         raise AttemptInputError(f"Work-continuity {label} must record at least one step")
     steps: list[RecordedStep] = []
@@ -181,11 +276,12 @@ def _steps(raw: object, label: str, task_id: str, declared: set[str]) -> tuple[R
             "step",
             "action_text",
             "relied_on",
+            "performed_action_id",
             "correction",
         }:
             raise AttemptInputError(
                 f"Work-continuity {label} step {index} must declare step, action_text, and relied_on, "
-                "and may add correction"
+                "and may add performed_action_id and correction"
             )
         number = step["step"]
         if not isinstance(number, int) or isinstance(number, bool) or number != index + 1:
@@ -203,6 +299,7 @@ def _steps(raw: object, label: str, task_id: str, declared: set[str]) -> tuple[R
             if fact_id in references:
                 raise AttemptInputError(f"Work-continuity {label} step {number} repeats fact {fact_id}")
             references.append(fact_id)
+        performed_action_id = _performed_action_id(step, label, number, expected_action_id)
         correction = step.get("correction", False)
         if not isinstance(correction, bool):
             raise AttemptInputError(f"Work-continuity {label} step {number} correction must be a boolean")
@@ -211,10 +308,26 @@ def _steps(raw: object, label: str, task_id: str, declared: set[str]) -> tuple[R
                 step=number,
                 action_text=_text(step["action_text"], f"{label} step {number} action_text"),
                 relied_on=tuple(references),
+                performed_action_id=performed_action_id,
                 correction=correction,
             )
         )
     return tuple(steps)
+
+
+def _performed_action_id(step: dict[str, object], label: str, number: int, expected_action_id: str) -> str | None:
+    """Return the declared performed action, rejecting an undeclared one."""
+
+    value = step.get("performed_action_id")
+    if value is None:
+        return None
+    action_id = _text(value, f"{label} step {number} performed_action_id")
+    if action_id != expected_action_id:
+        raise AttemptInputError(
+            f"Work-continuity {label} step {number} declares performed_action_id {action_id!r}, "
+            f"but the only action this task declares is {expected_action_id!r}"
+        )
+    return action_id
 
 
 def _text(value: object, label: str) -> str:
@@ -223,7 +336,8 @@ def _text(value: object, label: str) -> str:
     return value
 
 
-def _optional_text(value: object, label: str) -> str | None:
-    if value is None:
-        return None
-    return _text(value, label)
+def _sha256(value: object, label: str) -> str:
+    digest = _text(value, label)
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise AttemptInputError(f"Work-continuity {label} must be a lowercase hex sha256 digest")
+    return digest

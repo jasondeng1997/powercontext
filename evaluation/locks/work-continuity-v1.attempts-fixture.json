@@ -1,5 +1,10 @@
 {
   "schema": "powercontext.work-continuity-attempts.v1",
+  "protocol": {
+    "task_set_id": "work-continuity-v1",
+    "task_lock_sha256": "76f26cb6a0292e6cbce8996e315ce6d6e5b8bfc7815e697a62c42e4453b38cf1",
+    "assembly_max_bytes": 16000
+  },
   "attempts": [
     {
       "task_id": "wc-coding-0001",
@@ -7,6 +12,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "2524acaa19d44da931d2ca2d30699b1b8e39b198c7cf99f85e87c10765864435",
       "steps": [
         {
           "step": 1,
@@ -22,7 +28,8 @@
             "wc-0001-f5",
             "wc-0001-f6",
             "wc-0001-o1"
-          ]
+          ],
+          "performed_action_id": "wc-0001-a1"
         }
       ]
     },
@@ -32,6 +39,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "44ff2d5a4d372f022f53995197087956de232c854f923fac7f381f2f4884490d",
       "steps": [
         {
           "step": 1,
@@ -63,6 +71,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "3d281a3ddf6c18f63d9ec04c4066f6a0a7c7987534970196b15d07fcbd2275ca",
       "steps": [
         {
           "step": 1,
@@ -94,6 +103,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fed629804565c02a7d45372c6ff3408fd89cee12cb438d55f024f1bfe679bd78",
       "steps": [
         {
           "step": 1,
@@ -103,7 +113,8 @@
             "wc-0001-f3",
             "wc-0001-f5",
             "wc-0001-f6"
-          ]
+          ],
+          "performed_action_id": "wc-0001-a1"
         }
       ]
     },
@@ -113,6 +124,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "502c1e00bb6d6e74ebb9d4def9ec6296058c60ec91a7ec0bd4232760b40e9016",
       "steps": [
         {
           "step": 1,
@@ -126,7 +138,8 @@
             "wc-0002-f1",
             "wc-0002-f2",
             "wc-0002-f3"
-          ]
+          ],
+          "performed_action_id": "wc-0002-a1"
         }
       ]
     },
@@ -136,6 +149,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fc3b5f5ba09d7f50f0bef2940463e1b0642a827b87f5b49d67aa82da033d7ba5",
       "steps": [
         {
           "step": 1,
@@ -166,6 +180,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9df662ddc8a0b279c3ee97357b44db901be7b60ac7d70da08f27fc4c30c8d050",
       "steps": [
         {
           "step": 1,
@@ -196,6 +211,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "634ca786933387e826b4745352537ee54a58f78045cc42b73d8d3d2b93eaa26a",
       "steps": [
         {
           "step": 1,
@@ -204,7 +220,8 @@
             "wc-0002-f1",
             "wc-0002-f2",
             "wc-0002-f3"
-          ]
+          ],
+          "performed_action_id": "wc-0002-a1"
         }
       ]
     },
@@ -214,6 +231,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9182a9f1a43a4250354ef6627e4f3379b765304509714d521b453e5a01746e4b",
       "steps": [
         {
           "step": 1,
@@ -228,7 +246,8 @@
             "wc-0003-f2",
             "wc-0003-f3",
             "wc-0003-f4"
-          ]
+          ],
+          "performed_action_id": "wc-0003-a1"
         }
       ]
     },
@@ -238,6 +257,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "afef7cfba910b8f69b6905fe5ea1c514fbb97110f5a5548a65cfded709b4ad14",
       "steps": [
         {
           "step": 1,
@@ -269,6 +289,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "765933931916f7bfb54ff7a578fc2130356f3388038cd47e97715c2d51534995",
       "steps": [
         {
           "step": 1,
@@ -300,6 +321,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "ebf8710568855c1aaecb382e716ca49227a93f620741456a422b9c5effaaae09",
       "steps": [
         {
           "step": 1,
@@ -310,7 +332,8 @@
             "wc-0003-f3",
             "wc-0003-f4",
             "wc-0003-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0003-a1"
         }
       ]
     },
@@ -320,6 +343,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "1475c3ceb439d1327051804db457a6fa350cd7e09bd1744eeaa4a0151a85bff8",
       "steps": [
         {
           "step": 1,
@@ -334,7 +358,8 @@
             "wc-0004-f4",
             "wc-0004-f5",
             "wc-0004-o1"
-          ]
+          ],
+          "performed_action_id": "wc-0004-a1"
         }
       ]
     },
@@ -344,6 +369,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "6a7bb0e749ddd57e0751b4afcd33da5c805f4552da6cd5240acfa6e48d46a9e2",
       "steps": [
         {
           "step": 1,
@@ -374,6 +400,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "68fa29c3af9651fabc3066360ab60e087dcfe24671966a1976eb8acb813b8a9e",
       "steps": [
         {
           "step": 1,
@@ -404,6 +431,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "2a36b33517897d5c930805f131639b89abbf898a39b8f6168c9bb51088eb0a3d",
       "steps": [
         {
           "step": 1,
@@ -419,7 +447,8 @@
             "wc-0004-f1",
             "wc-0004-f4",
             "wc-0004-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0004-a1"
         }
       ]
     },
@@ -429,6 +458,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9acd1c0964f552fa9319c0b85b1265a5302b4211a9b0f31ddfe2dc8c14c8f1e8",
       "steps": [
         {
           "step": 1,
@@ -443,7 +473,8 @@
             "wc-0005-f3",
             "wc-0005-f4",
             "wc-0005-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0005-a1"
         }
       ]
     },
@@ -453,6 +484,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fd01f685a836346a5975975127bd00606ab5360ebd225960b159d05639b9647e",
       "steps": [
         {
           "step": 1,
@@ -484,6 +516,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "b447b08bf760bb5a416b24816510233d40f30edae58a7eb70dce3dde883b3d64",
       "steps": [
         {
           "step": 1,
@@ -515,6 +548,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "05e704d92c2c9fe9f774f200c20858efe556bbdd0ecd80f33b274d2c9765f122",
       "steps": [
         {
           "step": 1,
@@ -531,7 +565,8 @@
             "wc-0005-f3",
             "wc-0005-f4",
             "wc-0005-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0005-a1"
         }
       ]
     },
@@ -541,6 +576,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "25008ec61560289e279bbdc49ad7febe3bf97c980372a26cb85c60cb466e1a3e",
       "steps": [
         {
           "step": 1,
@@ -556,7 +592,8 @@
             "wc-0006-f4",
             "wc-0006-f5",
             "wc-0006-o1"
-          ]
+          ],
+          "performed_action_id": "wc-0006-a1"
         }
       ]
     },
@@ -566,6 +603,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "ee757f007cc0093396d70d03c5e4edc31f4422c8623da64fc9e74402838833d9",
       "steps": [
         {
           "step": 1,
@@ -597,6 +635,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "5718090f9662fbadcee66f9d49b5641a02b20abd53c4598018007a6ed7952181",
       "steps": [
         {
           "step": 1,
@@ -628,6 +667,7 @@
       "host": "synthetic-fixture-a",
       "host_revision": "synthetic-fixture-a@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "cafdf78a9cc46c301807d0b0ae773c2777de462a582cd34912cfe378e999a1cc",
       "steps": [
         {
           "step": 1,
@@ -637,7 +677,8 @@
             "wc-0006-f3",
             "wc-0006-f4",
             "wc-0006-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0006-a1"
         }
       ]
     },
@@ -647,6 +688,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "2524acaa19d44da931d2ca2d30699b1b8e39b198c7cf99f85e87c10765864435",
       "steps": [
         {
           "step": 1,
@@ -661,7 +703,8 @@
             "wc-0001-f3",
             "wc-0001-f5",
             "wc-0001-f6"
-          ]
+          ],
+          "performed_action_id": "wc-0001-a1"
         }
       ]
     },
@@ -671,6 +714,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "44ff2d5a4d372f022f53995197087956de232c854f923fac7f381f2f4884490d",
       "steps": [
         {
           "step": 1,
@@ -702,6 +746,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "3d281a3ddf6c18f63d9ec04c4066f6a0a7c7987534970196b15d07fcbd2275ca",
       "steps": [
         {
           "step": 1,
@@ -733,6 +778,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fed629804565c02a7d45372c6ff3408fd89cee12cb438d55f024f1bfe679bd78",
       "steps": [
         {
           "step": 1,
@@ -742,7 +788,8 @@
             "wc-0001-f3",
             "wc-0001-f5",
             "wc-0001-f6"
-          ]
+          ],
+          "performed_action_id": "wc-0001-a1"
         }
       ]
     },
@@ -752,6 +799,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "502c1e00bb6d6e74ebb9d4def9ec6296058c60ec91a7ec0bd4232760b40e9016",
       "steps": [
         {
           "step": 1,
@@ -766,7 +814,8 @@
             "wc-0002-f2",
             "wc-0002-f3",
             "wc-0002-o1"
-          ]
+          ],
+          "performed_action_id": "wc-0002-a1"
         }
       ]
     },
@@ -776,6 +825,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fc3b5f5ba09d7f50f0bef2940463e1b0642a827b87f5b49d67aa82da033d7ba5",
       "steps": [
         {
           "step": 1,
@@ -806,6 +856,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9df662ddc8a0b279c3ee97357b44db901be7b60ac7d70da08f27fc4c30c8d050",
       "steps": [
         {
           "step": 1,
@@ -836,6 +887,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "634ca786933387e826b4745352537ee54a58f78045cc42b73d8d3d2b93eaa26a",
       "steps": [
         {
           "step": 1,
@@ -858,7 +910,8 @@
             "wc-0002-f1",
             "wc-0002-f2",
             "wc-0002-f3"
-          ]
+          ],
+          "performed_action_id": "wc-0002-a1"
         }
       ]
     },
@@ -868,6 +921,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9182a9f1a43a4250354ef6627e4f3379b765304509714d521b453e5a01746e4b",
       "steps": [
         {
           "step": 1,
@@ -883,7 +937,8 @@
             "wc-0003-f3",
             "wc-0003-f4",
             "wc-0003-o1"
-          ]
+          ],
+          "performed_action_id": "wc-0003-a1"
         }
       ]
     },
@@ -893,6 +948,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "afef7cfba910b8f69b6905fe5ea1c514fbb97110f5a5548a65cfded709b4ad14",
       "steps": [
         {
           "step": 1,
@@ -924,6 +980,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "765933931916f7bfb54ff7a578fc2130356f3388038cd47e97715c2d51534995",
       "steps": [
         {
           "step": 1,
@@ -955,6 +1012,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "ebf8710568855c1aaecb382e716ca49227a93f620741456a422b9c5effaaae09",
       "steps": [
         {
           "step": 1,
@@ -964,7 +1022,8 @@
             "wc-0003-f2",
             "wc-0003-f3",
             "wc-0003-f4"
-          ]
+          ],
+          "performed_action_id": "wc-0003-a1"
         }
       ]
     },
@@ -974,6 +1033,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "1475c3ceb439d1327051804db457a6fa350cd7e09bd1744eeaa4a0151a85bff8",
       "steps": [
         {
           "step": 1,
@@ -987,7 +1047,8 @@
             "wc-0004-f1",
             "wc-0004-f4",
             "wc-0004-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0004-a1"
         }
       ]
     },
@@ -997,6 +1058,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "6a7bb0e749ddd57e0751b4afcd33da5c805f4552da6cd5240acfa6e48d46a9e2",
       "steps": [
         {
           "step": 1,
@@ -1027,6 +1089,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "68fa29c3af9651fabc3066360ab60e087dcfe24671966a1976eb8acb813b8a9e",
       "steps": [
         {
           "step": 1,
@@ -1057,6 +1120,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "2a36b33517897d5c930805f131639b89abbf898a39b8f6168c9bb51088eb0a3d",
       "steps": [
         {
           "step": 1,
@@ -1065,7 +1129,8 @@
             "wc-0004-f1",
             "wc-0004-f4",
             "wc-0004-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0004-a1"
         }
       ]
     },
@@ -1075,6 +1140,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "9acd1c0964f552fa9319c0b85b1265a5302b4211a9b0f31ddfe2dc8c14c8f1e8",
       "steps": [
         {
           "step": 1,
@@ -1089,7 +1155,8 @@
             "wc-0005-f3",
             "wc-0005-f4",
             "wc-0005-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0005-a1"
         }
       ]
     },
@@ -1099,6 +1166,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "fd01f685a836346a5975975127bd00606ab5360ebd225960b159d05639b9647e",
       "steps": [
         {
           "step": 1,
@@ -1130,6 +1198,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "b447b08bf760bb5a416b24816510233d40f30edae58a7eb70dce3dde883b3d64",
       "steps": [
         {
           "step": 1,
@@ -1161,6 +1230,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "05e704d92c2c9fe9f774f200c20858efe556bbdd0ecd80f33b274d2c9765f122",
       "steps": [
         {
           "step": 1,
@@ -1170,7 +1240,8 @@
             "wc-0005-f3",
             "wc-0005-f4",
             "wc-0005-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0005-a1"
         }
       ]
     },
@@ -1180,6 +1251,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "25008ec61560289e279bbdc49ad7febe3bf97c980372a26cb85c60cb466e1a3e",
       "steps": [
         {
           "step": 1,
@@ -1194,7 +1266,8 @@
             "wc-0006-f3",
             "wc-0006-f4",
             "wc-0006-f5"
-          ]
+          ],
+          "performed_action_id": "wc-0006-a1"
         }
       ]
     },
@@ -1204,6 +1277,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "ee757f007cc0093396d70d03c5e4edc31f4422c8623da64fc9e74402838833d9",
       "steps": [
         {
           "step": 1,
@@ -1235,6 +1309,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "5718090f9662fbadcee66f9d49b5641a02b20abd53c4598018007a6ed7952181",
       "steps": [
         {
           "step": 1,
@@ -1266,6 +1341,7 @@
       "host": "synthetic-fixture-b",
       "host_revision": "synthetic-fixture-b@fixture-1",
       "model": "declared-in-fixture-only",
+      "context_sha256": "cafdf78a9cc46c301807d0b0ae773c2777de462a582cd34912cfe378e999a1cc",
       "steps": [
         {
           "step": 1,

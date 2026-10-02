@@ -95,6 +95,7 @@ from powercontext_eval.benchmarks.work_continuity.report import (
 )
 from powercontext_eval.benchmarks.work_continuity.runner import (
     WorkContinuityRunError,
+    execution_configuration,
     run_summary,
     run_work_continuity,
     write_run_artifacts,
@@ -683,6 +684,16 @@ def work_continuity_validate(
                 "supported_arms": list(supported_continuation_arm_ids()),
                 "attempt_count": None if recorded is None else len(recorded.attempts),
                 "hosts": None if recorded is None else list(recorded.hosts),
+                "recording_protocol": (
+                    None
+                    if recorded is None
+                    else {
+                        "task_set_id": recorded.protocol.task_set_id,
+                        "task_lock_sha256": recorded.protocol.task_lock_sha256,
+                        "assembly_max_bytes": recorded.protocol.assembly_max_bytes,
+                    }
+                ),
+                "execution_configuration": None if recorded is None else execution_configuration(recorded),
             },
             ensure_ascii=False,
             sort_keys=True,

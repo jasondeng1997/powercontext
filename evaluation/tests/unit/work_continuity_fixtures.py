@@ -21,14 +21,56 @@ one field rather than to a large checked-in dataset.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
-from powercontext_eval.benchmarks.work_continuity.arms import ContinuationArm
-from powercontext_eval.benchmarks.work_continuity.assembly import build_items
-from powercontext_eval.benchmarks.work_continuity.catalog import TASK_LOCK_SCHEMA, ContinuationTask
+from powercontext_eval.benchmarks.work_continuity.arms import (
+    ContinuationArm,
+    ContinuationArmError,
+    get_continuation_arm,
+)
+from powercontext_eval.benchmarks.work_continuity.assembly import assemble_context, build_items
+from powercontext_eval.benchmarks.work_continuity.catalog import (
+    TASK_LOCK_SCHEMA,
+    ContinuationTask,
+    TaskCatalog,
+    WorkContinuityCatalogError,
+)
 
 ATTEMPTS_SCHEMA = "powercontext.work-continuity-attempts.v1"
+DEFAULT_MAX_BYTES = 16_000
+
+# Scoring is a pure function of a recording and the context it is scored against.
+# The binding between the two is enforced when a run binds recordings to the
+# contexts it assembled, so a placeholder digest here keeps these tests about the
+# rubric instead of about the run-level gate.
+UNBOUND_CONTEXT_SHA256 = "0" * 64
+
+
+def attempts_protocol(lock: Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> dict[str, object]:
+    """Return the protocol block a recording made from ``lock`` must declare."""
+
+    resolved = lock.resolve()
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    return {
+        "task_set_id": payload["task_set_id"],
+        "task_lock_sha256": hashlib.sha256(resolved.read_bytes()).hexdigest(),
+        "assembly_max_bytes": max_bytes,
+    }
+
+
+def context_digest(
+    lock: Path,
+    task_id: str,
+    arm_id: str,
+    *,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> str:
+    """Return the digest of the context a recording for this task and arm received."""
+
+    catalog = TaskCatalog.load(lock)
+    return assemble_context(catalog.require(task_id), get_continuation_arm(arm_id), max_bytes=max_bytes).content_sha256
 
 
 def budget_through(task: ContinuationTask, arm: ContinuationArm, item_id: str) -> int:
@@ -162,23 +204,55 @@ def analysis_lock(tmp_path: Path) -> Path:
     return write_lock(tmp_path, [audit_task(), documentation_task()])
 
 
-def valid_attempt(**overrides: object) -> dict[str, object]:
+def valid_attempt(lock: Path, **overrides: object) -> dict[str, object]:
+    """A well-formed recording against the standard lock's coding task.
+
+    The context digest is derived from the entry's own task and arm, so a test that
+    swaps either one still produces a recording bound to the context it names.
+    """
+
     entry: dict[str, object] = {
         "task_id": "t-coding",
         "arm_id": "rollover-handoff-v1",
         "host": "fixture-host",
+        "host_revision": "fixture-host@1",
+        "model": "fixture-model",
+        "context_sha256": UNBOUND_CONTEXT_SHA256,
         "steps": [
             {"step": 1, "action_text": "Compared the checkpoint with the module.", "relied_on": ["f1"]},
-            {"step": 2, "action_text": "Applied the retry base.", "relied_on": ["f1", "f2"]},
+            {
+                "step": 2,
+                "action_text": "Applied the retry base.",
+                "relied_on": ["f1", "f2"],
+                "performed_action_id": "a1",
+            },
         ],
     }
     entry.update(overrides)
+    if "context_sha256" not in overrides:
+        try:
+            entry["context_sha256"] = context_digest(lock, str(entry["task_id"]), str(entry["arm_id"]))
+        except (WorkContinuityCatalogError, ContinuationArmError):
+            # These overrides deliberately name an unknown task or arm, which the
+            # validator under test rejects before the digest could matter.
+            pass
     return entry
 
 
-def write_attempts(tmp_path: Path, entries: list[dict[str, object]]) -> Path:
+def write_attempts(
+    tmp_path: Path,
+    entries: list[dict[str, object]],
+    *,
+    lock: Path,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+) -> Path:
+    payload = {
+        "schema": ATTEMPTS_SCHEMA,
+        "protocol": attempts_protocol(lock, max_bytes=max_bytes),
+        "attempts": entries,
+    }
     path = tmp_path / "attempts.json"
-    path.write_text(json.dumps({"schema": ATTEMPTS_SCHEMA, "attempts": entries}, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return path
 
 

@@ -18,7 +18,7 @@ never merged:
 | Group | Metric | Definition |
 | --- | --- | --- |
 | Injected | `injected_bytes` | Exact UTF-8 size of the assembled continuation context. The host's own system prompt, tool schemas, repository instructions, and workspace files are outside this measurement. |
-| Outcome | `task_success` | The recorded attempt recovered the task's declared next action, relying on the facts that action depends on and not on superseded ones. |
+| Outcome | `task_success` | The recorded attempt performed the task's declared next action, relying on the facts that action depends on and not on superseded ones. |
 | Outcome | `time_to_recover_state` | Step index at which recovery happened. An attempt that never recovers is recorded as a sentinel, not as zero. |
 | Outcome | `incorrect_assumptions` | Steps that relied on a superseded fact. |
 | Outcome | `missing_evidence` | Required facts the context never delivered. |
@@ -43,9 +43,11 @@ of any method, and injected bytes measure the method instead of the allowance.
 | `rollover-handoff-v1` | rollover-handoff | no (treatment) | State facts with evidence pointers, the next action, and the omissions. Superseded facts are excluded. |
 
 `ensure_comparable_work_continuity_runs` rejects a comparison whose task set digest, task
-selection, byte ceiling, or PowerContext/integration revisions differ. The host is
-deliberately *not* part of that check: a host is a declared dimension of this evaluation, and
-the arm is exactly the intended difference.
+selection, byte ceiling, PowerContext/integration revisions, or recorded execution
+configuration differ. The host *name* is deliberately not part of that check: a host is a
+declared dimension of this evaluation, and the arm is exactly the intended difference. The
+model and host revision that produced the recordings are part of it, because comparing arms
+recorded under different models would measure the models rather than the methods.
 
 ## Task set and ground truth
 
@@ -75,9 +77,34 @@ against the task lock before anything is scored. Each recorded step names the de
 ids it relied on, so scoring stays exact instead of depending on text matching against
 free-form model output.
 
+A recording is only evidence about a method if it was produced under the protocol this run
+assembles. The artifact therefore declares that protocol and each attempt is bound to the
+context it actually received:
+
+| Field | Level | Meaning |
+| --- | --- | --- |
+| `protocol.task_set_id` | artifact | Must equal the task lock's task set id. |
+| `protocol.task_lock_sha256` | artifact | Must equal the task lock's own content digest. |
+| `protocol.assembly_max_bytes` | artifact | Must equal the ceiling this run assembles with. |
+| `context_sha256` | attempt | SHA-256 of the delivered context text, checked against the assembled context before scoring. |
+| `host_revision` | attempt | The host revision that produced the recording. A host may report exactly one. |
+| `model` | attempt | The model that produced the recording. A host may report exactly one. |
+| `performed_action_id` | step | The action this step performed, when it performed one. |
+
+Those bindings are what stop a run from rescoring old recordings against a context nobody
+delivered: scoring the same attempts under `--max-bytes 1` is refused, because the digest of
+the one-byte context does not match the digest the recording was taken under. A host that
+reports two model or host-revision configurations is rejected before scoring.
+
+Recovery also requires the step to have *done* the work. A step counts as recovered only when
+it performed the task's declared next action — naming the facts an action depends on is
+reading, not continuing, and continuing from a superseded plan is not continuing the declared
+one.
+
 `evaluation/locks/work-continuity-v1.attempts-fixture.json` is a synthetic fixture
 (6 tasks × 4 methods × 2 hosts = 48 attempts) that exercises every failure branch. It is
-labeled synthetic in the artifact itself.
+labeled synthetic in the artifact itself, and it carries the protocol block and per-attempt
+digests described above.
 
 ## Failure analysis
 
@@ -95,13 +122,23 @@ unactionable list.
 | `vague_next_action` | `QR-next-action` | Make the next action depend on named facts. |
 | `no_recording` | none | Provide a recording; this asks for evidence, not a contract change. |
 
+`budget_truncation` is claimed whenever the byte ceiling removed material a required fact
+depends on — a dropped `state:*` item *or* a dropped `turn:N` item that carries the fact's
+evidence. Without the second half, a transcript method could never receive this
+classification at all: its state facts are not separate items, so a ceiling that dropped every
+turn holding a required fact's evidence used to be scored as `context_absent`, blaming the
+method for material the budget removed.
+
 `QR-*` requirements are the Handoff quality requirements; `IV-*` requirements are the
 "invalid or should require correction" content rules from RFC 1783. Both are enforced
-deterministically by `check_rollover_quality`.
+deterministically by `check_rollover_quality`, against the fields the ceiling actually
+delivered. The complete draft is reported next to that number rather than in place of it, so
+a ceiling that emptied a context cannot certify the requirements it never carried.
 
-Comparisons are scoped per host. A baseline recorded on one host can never "beat" the
-treatment recorded on another, because that comparison would describe two different
-integrations rather than two continuation methods.
+Comparisons are scoped per host *and* per execution configuration. A baseline recorded on one
+host can never "beat" the treatment recorded on another, because that comparison would
+describe two different integrations rather than two continuation methods; and two runs whose
+hosts report different models or host revisions are refused outright.
 
 ## Running it
 
@@ -121,7 +158,10 @@ uv run --project evaluation powercontext-eval work-continuity run \
 
 `run` writes `run-manifest.json`, `assembly.jsonl`, `scores.jsonl`, `run-summary.json`,
 `report.json`, and `report.md`. Passing `--attempts` is optional: without it the run reports
-assembly only, and every `injected_bytes` number is still produced.
+assembly only, and every `injected_bytes` number is still produced. An assembly-only run
+reports recording coverage and comparison as *unavailable* rather than as clean — it never
+prints that every task has a recorded attempt, and it never claims the treatment did not rank
+below a baseline, because neither was measured.
 
 `--arm` and `--task-id` narrow a run for focused work. A narrowed run still refuses an
 attempt artifact that names a task or arm it did not select, so a partial run cannot be
@@ -133,7 +173,7 @@ With the shipped synthetic fixture the harness reports, per method:
 
 | Method | Injected bytes | Recovered |
 | --- | ---: | ---: |
-| `full-transcript-v1` | 8,784 | 12 |
+| `full-transcript-v1` | 8,784 | 7 |
 | `compacted-transcript-v1` | 5,007 | 0 |
 | `informal-summary-v1` | 1,711 | 0 |
 | `rollover-handoff-v1` | 6,697 | 11 |
@@ -158,6 +198,9 @@ measures, and nothing about production traffic.
 - Injected bytes count the assembled continuation context only.
 - Task success is scored against one declared next action per task, so a different but
   equally correct continuation is not credited.
+- Handoff quality is checked against the fields the byte ceiling actually delivered, with the
+  complete draft reported next to them, so a truncated context cannot pass on material it
+  never carried.
 - Host names in a run do not imply a verified host integration.
 
 This is a small, runnable validation rather than a complete evaluation. Extending it toward a
