@@ -232,6 +232,89 @@ def test_writer_lock_released_inside_the_budget_still_records(tmp_path: Path) ->
     asyncio.run(scenario())
 
 
+def test_an_attempt_that_expires_at_checkout_is_repeated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An expired attempt applied nothing, so the record keeps its budget."""
+
+    async def scenario() -> None:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'slow-checkout.db'}")
+        async with _database(config) as database:
+            starts = 0
+            original_start = AsyncConnection.start
+
+            async def start(connection: AsyncConnection, is_ctxmanager: bool = False) -> AsyncConnection:
+                nonlocal starts
+                starts += 1
+                if starts == 1:
+                    # Outlive the whole slice without starting driver work, so
+                    # the attempt expires with nothing applied.
+                    await asyncio.sleep(0.08)
+                return await original_start(connection, is_ctxmanager)
+
+            monkeypatch.setattr(AsyncConnection, "start", start)
+            recorder = _ModelUsageRecorder(database, StatisticsRepository(), write_timeout_seconds=0.2)
+            try:
+                _offer(recorder)
+                await recorder.flush()
+                assert starts > 1
+                assert (await _rows(database))[0].requests == 1
+                await _assert_connection_restored(database)
+            finally:
+                await recorder.close()
+
+    asyncio.run(scenario())
+
+
+class _SlowBodyRepository(StatisticsRepository):
+    """Make the first write outlive its slice without leaving the event loop."""
+
+    def __init__(self, *, delay: float) -> None:
+        self.delay = delay
+        self.calls = 0
+
+    async def record(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        usage_date: date,
+        purpose: ModelUsagePurpose,
+        operation: ModelUsageOperation,
+        usage: InferenceUsage,
+        /,
+    ) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            await asyncio.sleep(self.delay)
+        await super().record(connection, scope_id, usage_date, purpose, operation, usage)
+
+
+def test_a_body_that_outlives_its_slice_is_repeated_not_dropped(tmp_path: Path) -> None:
+    """A body that finishes after its own slice still records.
+
+    The deadline check runs after the body, so on its own it can only discard
+    work that is already done. A released usage write must not depend on the
+    release landing inside one slice, which is what the stalled-request e2e test
+    asserts when it waits for a visible row on a loaded machine.
+    """
+
+    async def scenario() -> None:
+        config = SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'late-body.db'}")
+        async with _database(config) as database:
+            # One record's 0.2s budget is spent in 0.05s slices, so a 0.08s body
+            # outlives the attempt that owns it while the record owns budget.
+            repository = _SlowBodyRepository(delay=0.08)
+            recorder = _ModelUsageRecorder(database, repository, write_timeout_seconds=0.2)
+            try:
+                _offer(recorder)
+                await recorder.flush()
+                assert repository.calls == 2
+                assert (await _rows(database))[0].requests == 1
+                await _assert_connection_restored(database)
+            finally:
+                await recorder.close()
+
+    asyncio.run(scenario())
+
+
 def test_close_under_a_held_writer_lock_is_bounded(tmp_path: Path) -> None:
     async def scenario() -> None:
         path = tmp_path / "close-locked.db"

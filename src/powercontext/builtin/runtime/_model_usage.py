@@ -27,7 +27,11 @@ from sqlalchemy.exc import OperationalError
 
 from powercontext._logging import log_safely
 from powercontext.builtin.inference import InferenceUsage
-from powercontext.builtin.persistence.database import AsyncDatabase, is_transaction_contention
+from powercontext.builtin.persistence.database import (
+    AsyncDatabase,
+    ModelUsageAttemptExpired,
+    is_transaction_contention,
+)
 from powercontext.builtin.persistence.statistics import StatisticsRepository
 from powercontext.builtin.persistence.tables import SCOPES_TABLE
 from powercontext.builtin.statistics import ModelUsageOperation, ModelUsagePurpose
@@ -66,8 +70,9 @@ class _ModelUsageRecorder:
     """Offer without I/O; serialize independent writes on one owned consumer.
 
     Checkpoints identify accepted records, not successful writes. A failed or
-    indeterminate transaction is settled once and is never retried. This is
-    deliberately lossy telemetry, not an authoritative billing ledger.
+    indeterminate transaction is settled once and is never retried; only a
+    failure that provably applied nothing is repeated inside the same budget.
+    This is deliberately lossy telemetry, not an authoritative billing ledger.
     """
 
     def __init__(
@@ -194,8 +199,12 @@ class _ModelUsageRecorder:
         """Write one record, retrying only a failure that rolled back cleanly.
 
         A busy or conflict error leaves nothing applied, so repeating it cannot
-        double count and is worth the rest of this record's budget. Any other
-        failure may have committed with an unknown outcome and is never retried.
+        double count and is worth the rest of this record's budget. An attempt
+        that expired before its body committed is the same shape and is worth the
+        same: the slices below are deliberately shorter than the budget, so a slow
+        body must be allowed to finish in a later one rather than take the
+        record's usage with it. Any other failure may have committed with an
+        unknown outcome and is never retried.
         """
 
         loop = asyncio.get_running_loop()
@@ -232,6 +241,15 @@ class _ModelUsageRecorder:
                 if not is_transaction_contention(error):
                     raise
                 # Let the competing writer finish before taking another slice.
+                await asyncio.sleep(min(_RETRY_BACKOFF_SECONDS, max(remaining, 0)))
+            except ModelUsageAttemptExpired:
+                if self._closed:
+                    # Shutdown is already draining: it dropped the backlog and
+                    # waits one write window for this consumer, so a repeat
+                    # cannot be counted on, and failing now ends it as expected.
+                    raise
+                # Unapplied and still inside the record's own budget, so hand the
+                # loop over rather than let a slow machine decide its fate.
                 await asyncio.sleep(min(_RETRY_BACKOFF_SECONDS, max(remaining, 0)))
             else:
                 return
