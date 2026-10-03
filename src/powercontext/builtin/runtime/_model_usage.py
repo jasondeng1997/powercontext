@@ -204,25 +204,32 @@ class _ModelUsageRecorder:
         A busy or conflict error leaves nothing applied, so repeating it cannot
         double count and is worth the rest of this record's budget. An attempt
         that expired before its body committed is the same shape and is worth the
-        same: the slices below are deliberately shorter than the budget, so a slow
-        body must be allowed to finish in a later one rather than take the
-        record's usage with it. Any other failure may have committed with an
-        unknown outcome and is never retried.
+        same: a slow body must be allowed to finish rather than take the record's
+        usage with it. Any other failure may have committed with an unknown
+        outcome and is never retried.
         """
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._write_timeout_seconds
-        # A fixed slice per attempt rather than a re-sliced remainder, so one
-        # attempt that really does wait cannot consume the whole budget. Contended
-        # attempts normally return immediately, so the backoff interval, not this
-        # slice, is what decides how many attempts fit inside the deadline.
+        # The first attempt gets a fixed slice rather than the whole budget, so
+        # one attempt that really does wait cannot consume all of it before any
+        # repeat happens. Contended attempts normally return immediately, so the
+        # backoff interval, not this slice, is what decides how many attempts fit
+        # inside the deadline.
         attempt_timeout = max(self._write_timeout_seconds / _WRITE_ATTEMPT_SLICES, _MIN_WRITE_ATTEMPT_SECONDS)
+        # Every repeat gets what the record has left. Repeating is only reached
+        # once a slice-sized attempt has already failed, and that failure is the
+        # evidence that a slice is not what this record needs: handing the repeat
+        # the same slice reaches the same wall and drops a record that still owns
+        # most of its budget. The budget, not the slice, is what bounds the total.
+        first_attempt = True
         while True:
             remaining = deadline - loop.time()
             if remaining <= 0:
                 raise TimeoutError
+            allowance = attempt_timeout if first_attempt else remaining
             try:
-                async with self._database._model_usage_transaction(min(remaining, attempt_timeout)) as connection:
+                async with self._database._model_usage_transaction(min(remaining, allowance)) as connection:
                     # Lock the Scope row on MySQL so delete cannot race the
                     # increment. SQLite ignores FOR UPDATE; its real snapshot
                     # makes a competing delete fail the write upgrade instead.
@@ -243,7 +250,8 @@ class _ModelUsageRecorder:
             except OperationalError as error:
                 if not is_transaction_contention(error):
                     raise
-                # Let the competing writer finish before taking another slice.
+                # Let the competing writer finish before taking the rest.
+                first_attempt = False
                 await asyncio.sleep(min(_RETRY_BACKOFF_SECONDS, max(remaining, 0)))
             except ModelUsageAttemptExpired:
                 if self._closed:
@@ -252,7 +260,10 @@ class _ModelUsageRecorder:
                     # cannot be counted on, and failing now ends it as expected.
                     raise
                 # Unapplied and still inside the record's own budget, so hand the
-                # loop over rather than let a slow machine decide its fate.
+                # loop over rather than let a slow machine decide its fate, and
+                # stop slicing: this attempt is the evidence that the body, not a
+                # wait, is what takes the time.
+                first_attempt = False
                 await asyncio.sleep(min(_RETRY_BACKOFF_SECONDS, max(remaining, 0)))
             else:
                 return
