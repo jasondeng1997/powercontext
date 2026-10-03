@@ -185,7 +185,10 @@ class _ModelUsageRecorder:
                     continue
                 sequence, record = self._pending.popleft()
                 try:
-                    await self._write(record)
+                    # The record is already accepted, so it must survive whoever
+                    # cancels this consumer: nothing else will ever retry it, and
+                    # `_settle` reports it as settled either way.
+                    await asyncio.shield(self._write(record))
                 except Exception:
                     log_safely(_LOGGER, logging.WARNING, "Model usage write failed; record will not be retried")
                 finally:
