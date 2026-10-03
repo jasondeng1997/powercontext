@@ -148,11 +148,16 @@ Comparisons are scoped per host *and* per execution configuration. A baseline re
 host can never "beat" the treatment recorded on another, because that comparison would
 describe two different integrations rather than two continuation methods; and two runs whose
 hosts report different models, host revisions, or configuration allocations are refused
-outright.
+outright. The allocation is compared per task, not only in total: a run that sent
+`wc-coding-0001` to model A and `wc-coding-0002` to model B is not comparable with one that
+swapped them, because a task is scored against its own declared next action, so that swap alone
+moves the success counts. Host *names* stay outside the comparison, so renaming a host does not
+make two runs incomparable.
 
-Recording coverage and comparison coverage are separate states. A run can record every selected
-task and method and still hold no comparison at all: the treatment may not be selected, may
-have no recording, or may never have been recorded on the same host as a baseline. The report
+Recording coverage and comparison coverage are separate states, and the unit of comparison is
+one task on one host. A run can record every selected task and method and still hold no
+comparison at all: the treatment may not be selected, may have no recording, or may never have
+been recorded on the same task *and* host as a baseline. The report
 names which of those absences it found instead of printing that the treatment did not rank
 below a baseline on a comparison that never happened.
 
@@ -178,9 +183,11 @@ assembly only, and every `injected_bytes` number is still produced. An assembly-
 reports recording coverage and comparison as *unavailable* rather than as clean — it never
 prints that every task has a recorded attempt, and it never claims the treatment did not rank
 below a baseline, because neither was measured. `run-summary.json` also carries a `comparison`
-block (`treatment_selected`, `treatment_recorded`, `baselines_recorded`, `compared_host_count`,
-`compared_hosts`), which is what lets a reader tell a run that held a comparison from one that
-only held recordings.
+block (`treatment_selected`, `treatment_recorded`, `baselines_recorded`, `compared_pair_count`,
+`compared_pairs`), which is what lets a reader tell a run that held a comparison from one that
+only held recordings. Each compared pair is one `(task, host)` unit where the treatment and at
+least one baseline were both recorded, so a host that holds the treatment for one task and a
+baseline for another contributes nothing rather than counting as a comparison.
 
 `--arm` and `--task-id` narrow a run for focused work. A narrowed run still refuses an
 attempt artifact that names a task or arm it did not select, so a partial run cannot be

@@ -243,7 +243,7 @@ def test_an_assembly_only_report_does_not_claim_unmeasured_coverage_or_compariso
     assert "Recording coverage is unavailable" in markdown
     assert "No comparison was performed" in markdown
     assert "Every selected task and method has a recorded attempt." not in markdown
-    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+    assert "The treatment did not rank below a baseline for any task and host in this run." not in markdown
     assert "Findings by class: unavailable" in markdown
 
 
@@ -272,14 +272,21 @@ def test_the_report_renders_the_recorded_execution_configuration(recorded: WorkC
     payload = report_payload(recorded)
 
     assert payload["execution_configuration"] == [
-        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model", "attempt_count": 8}
+        {
+            "host": HOST,
+            "host_revision": f"{HOST}@1",
+            "model": "declared-model",
+            "attempt_count": 8,
+            "tasks": {"t-audit": 4, "t-doc": 4},
+        }
     ]
     markdown = render_markdown(payload)
     assert "## Recorded execution configuration" in markdown
     assert "declared-model" in markdown
-    # The share of the recordings is rendered too, because the comparison gate
-    # weighs a configuration by it rather than only noticing that it appears.
-    assert "| `fixture-host` | `fixture-host@1` | `declared-model` | 8 |" in markdown
+    # The share of the recordings and the per-task split are rendered too, because
+    # the comparison gate weighs a configuration by them rather than only noticing
+    # that it appears somewhere.
+    assert "| `fixture-host` | `fixture-host@1` | `declared-model` | 8 | `t-audit` x4, `t-doc` x4 |" in markdown
 
 
 def test_a_recording_without_the_treatment_reports_no_comparison(tmp_path: Path) -> None:
@@ -308,11 +315,11 @@ def test_a_recording_without_the_treatment_reports_no_comparison(tmp_path: Path)
     markdown = render_markdown(payload)
 
     assert comparison["treatment_selected"] is False
-    assert comparison["compared_host_count"] == 0
+    assert comparison["compared_pair_count"] == 0
     assert "Every selected task and method has a recorded attempt." in markdown
     missing = "No comparison was performed: the treatment arm `rollover-handoff-v1` was not selected in this run."
     assert missing in markdown
-    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+    assert "The treatment did not rank below a baseline for any task and host in this run." not in markdown
 
 
 def test_a_selected_treatment_without_a_recording_reports_no_comparison(tmp_path: Path) -> None:
@@ -328,10 +335,10 @@ def test_a_selected_treatment_without_a_recording_reports_no_comparison(tmp_path
 
     assert block(payload, "comparison")["treatment_recorded"] is False
     assert "No comparison was performed: the treatment arm `rollover-handoff-v1` has no recorded attempt" in markdown
-    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+    assert "The treatment did not rank below a baseline for any task and host in this run." not in markdown
 
 
-def test_a_treatment_and_baselines_on_different_hosts_report_different_hosts(tmp_path: Path) -> None:
+def test_a_treatment_and_baselines_on_different_hosts_report_no_shared_unit(tmp_path: Path) -> None:
     """Both sides recorded, never on one host: the per-host scope is what blocks it."""
 
     lock = analysis_lock(tmp_path)
@@ -343,13 +350,47 @@ def test_a_treatment_and_baselines_on_different_hosts_report_different_hosts(tmp
     path = write_attempts(tmp_path, entries, lock=lock)
     run = run_work_continuity(task_lock=lock, run_id="split-hosts", attempts_path=path)
 
-    markdown = render_markdown(report_payload(run))
+    payload = report_payload(run)
+    markdown = render_markdown(payload)
 
+    assert block(payload, "comparison")["compared_pair_count"] == 0
     assert (
-        "No comparison was performed: the treatment and its baselines were recorded on different hosts, "
-        "and this benchmark only compares within one host." in markdown
+        "No comparison was performed: the treatment and its baselines were never recorded on the same task "
+        "and host, and this benchmark only compares one task on one host at a time." in markdown
     )
-    assert "The treatment did not rank below a baseline on any host in this run." not in markdown
+    assert "The treatment did not rank below a baseline for any task and host in this run." not in markdown
+
+
+def test_a_treatment_and_a_baseline_on_one_host_but_different_tasks_report_no_comparison(tmp_path: Path) -> None:
+    """The reproduction from review: one host is not one comparison.
+
+    The treatment and a baseline are both recorded on the one host, but they cover
+    different tasks, so no task ever had both. Counting coverage per host would
+    report one comparison and describe an underperformance ranking that was never
+    computed.
+    """
+
+    lock = analysis_lock(tmp_path)
+    entries = [
+        attempt(lock, "t-audit", TREATMENT_ARM_ID, step(1, ["h1", "h2"], performed="c1")),
+        attempt(lock, "t-doc", FULL_TRANSCRIPT.arm_id, step(1, ["g1", "g2"], performed="b1")),
+    ]
+    path = write_attempts(tmp_path, entries, lock=lock)
+    run = run_work_continuity(task_lock=lock, run_id="split-tasks", attempts_path=path)
+
+    payload = report_payload(run)
+    comparison = block(payload, "comparison")
+    markdown = render_markdown(payload)
+
+    assert comparison["compared_pairs"] == []
+    assert comparison["compared_pair_count"] == 0
+    assert comparison["treatment_recorded"] is True
+    assert comparison["baselines_recorded"] == [FULL_TRANSCRIPT.arm_id]
+    assert (
+        "No comparison was performed: the treatment and its baselines were never recorded on the same task "
+        "and host, and this benchmark only compares one task on one host at a time." in markdown
+    )
+    assert "The treatment did not rank below a baseline for any task and host in this run." not in markdown
 
 
 def test_the_report_writes_json_and_markdown_together(recorded: WorkContinuityRun, tmp_path: Path) -> None:

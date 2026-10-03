@@ -210,8 +210,9 @@ def ensure_comparable_work_continuity_runs(
     excluded, and neither is how the recordings were allocated between them: a run
     whose arms ran on different models is not comparable to one whose arms shared
     a model, and a run that put most recordings on one model is not comparable to
-    one that put most of them on another, because either difference would be read
-    as a continuation-method difference.
+    one that put most of them on another — nor is a run that assigned one task to
+    one model comparable with one that assigned that task to the other — because
+    any of those differences would be read as a continuation-method difference.
     """
 
     differences: list[str] = []
@@ -237,9 +238,12 @@ def _configuration_differences(manifest_a: Mapping[str, object], manifest_b: Map
     while the set stays the same, and the allocation is what mixes outcomes: a
     run that gave model A one host and model B nine cannot be compared with one
     that gave them nine and one, because that difference moves success counts
-    without saying anything about a continuation method. Host *names* stay out of
-    the comparison, so two host integrations remain comparable; what is compared
-    is how many recordings sat on each configuration.
+    without saying anything about a continuation method. The same holds one level
+    down when the totals agree: a run that sent task *X* to model A and task *Y*
+    to model B cannot be compared with one that swapped them, because a task is
+    scored on its own declared next action. Host *names* stay out of the
+    comparison, so two host integrations remain comparable; what is compared is
+    which configuration recorded which task, and how many times.
     """
 
     allocation_a = _configuration_allocation(manifest_a)
@@ -253,41 +257,66 @@ def _configuration_differences(manifest_a: Mapping[str, object], manifest_b: Map
     return []
 
 
-def _configuration_allocation(manifest: Mapping[str, object]) -> tuple[tuple[str, str, int], ...] | None:
-    """Return the recorded attempts per (host revision, model), host names dropped.
+def _configuration_allocation(
+    manifest: Mapping[str, object],
+) -> tuple[tuple[str, str, tuple[tuple[str, int], ...]], ...] | None:
+    """Return the recorded attempts per (host revision, model) and task, host names dropped.
 
     Entries that name the same configuration are merged, so the result is the
-    distribution the outcomes were drawn from rather than a per-host listing. A
-    manifest that cannot produce it — a missing block, a missing attempt count, a
-    non-positive count — yields ``None`` and the gate refuses the comparison
-    instead of treating the run as comparable by default.
+    distribution the outcomes were drawn from rather than a per-host listing. The
+    distribution is kept *per task*, because a task is scored against one declared
+    next action: two runs can agree on the hosts, the models, the host revisions
+    and the totals while assigning two tasks to the two models the other way
+    round, and with task-specific model behaviour that swap alone moves the
+    success counts without any method difference.
+
+    A manifest that cannot produce it — a missing block, a missing attempt count,
+    a task breakdown that does not add up, a non-positive count — yields ``None``
+    and the gate refuses the comparison instead of treating the runs as
+    comparable by default.
     """
 
     entries = manifest.get("execution_configuration")
     if not isinstance(entries, list):
         return None
-    counts: dict[tuple[str, str], int] = {}
+    counts: dict[tuple[str, str], dict[str, int]] = {}
     for entry in entries:
         if not isinstance(entry, Mapping):
             return None
         revision = entry.get("host_revision")
         model = entry.get("model")
         attempt_count = entry.get("attempt_count")
+        tasks = entry.get("tasks")
         if not isinstance(revision, str) or not isinstance(model, str):
             return None
         if not isinstance(attempt_count, int) or isinstance(attempt_count, bool) or attempt_count < 1:
             return None
-        key = (revision, model)
-        counts[key] = counts.get(key, 0) + attempt_count
-    return tuple(sorted((revision, model, count) for (revision, model), count in counts.items()))
+        if not isinstance(tasks, Mapping):
+            return None
+        per_task = counts.setdefault((revision, model), {})
+        declared = 0
+        for task_id, count in tasks.items():
+            if not isinstance(task_id, str) or not isinstance(count, int) or isinstance(count, bool) or count < 1:
+                return None
+            per_task[task_id] = per_task.get(task_id, 0) + count
+            declared += count
+        if declared != attempt_count:
+            return None
+    return tuple(
+        sorted((revision, model, tuple(sorted(per_task.items()))) for (revision, model), per_task in counts.items())
+    )
 
 
-def _allocation_text(allocation: tuple[tuple[str, str, int], ...]) -> str:
+def _allocation_text(allocation: tuple[tuple[str, str, tuple[tuple[str, int], ...]], ...]) -> str:
     """Render one allocation so a refusal names both distributions it compared."""
 
     if not allocation:
         return "none"
-    return ", ".join(f"{revision}/{model} x{count}" for revision, model, count in allocation)
+    return ", ".join(f"{revision}/{model} ({_tasks_text(tasks)})" for revision, model, tasks in allocation)
+
+
+def _tasks_text(tasks: tuple[tuple[str, int], ...]) -> str:
+    return " ".join(f"{task_id} x{count}" for task_id, count in tasks)
 
 
 def _unregistered_arm_differences(manifest: Mapping[str, object], label: str) -> list[str]:

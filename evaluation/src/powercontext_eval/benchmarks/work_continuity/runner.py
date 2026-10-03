@@ -265,24 +265,29 @@ def run_summary(run: WorkContinuityRun) -> dict[str, object]:
 def _comparison_block(run: WorkContinuityRun) -> dict[str, object]:
     """State whether this run held a baseline/treatment pair at all.
 
-    Recording coverage and comparison coverage are different questions. A run can
-    have a recorded attempt for every selected task and method and still hold no
-    comparison: the treatment may not be selected, may have no recording, or may
-    never have been recorded on the same host as a baseline — and comparisons
-    here are scoped per host. Reporting "the treatment did not rank below a
-    baseline" for such a run describes a measurement that never happened.
+    Recording coverage and comparison coverage are different questions, and the
+    unit of comparison is one task on one host. A run can have a recorded attempt
+    for every selected task and method and still hold no comparison: the treatment
+    may not be selected, may have no recording, or may never have been recorded on
+    the same task *and* host as a baseline. Reporting "the treatment did not rank
+    below a baseline" for such a run describes a measurement that never happened.
+
+    Coverage is therefore read from the matched ``(task, host)`` outcome, not from
+    a per-host set of arm ids. Grouping by host alone would let a run whose
+    recordings partition the tasks between the arms report a comparison on a host
+    where no task ever had both.
     """
 
     selected = tuple(dict.fromkeys(context.arm_id for context in run.contexts))
     baselines = tuple(arm_id for arm_id in selected if arm_id in BASELINE_ARM_IDS)
     recorded = {score.arm_id for score in run.scores}
-    by_host: dict[str, set[str]] = {}
+    by_unit: dict[tuple[str, str], set[str]] = {}
     for score in run.scores:
-        by_host.setdefault(score.host, set()).add(score.arm_id)
-    compared_hosts = tuple(
+        by_unit.setdefault((score.task_id, score.host), set()).add(score.arm_id)
+    compared_pairs = tuple(
         sorted(
-            host
-            for host, arm_ids in by_host.items()
+            unit
+            for unit, arm_ids in by_unit.items()
             if TREATMENT_ARM_ID in arm_ids and any(baseline in arm_ids for baseline in baselines)
         )
     )
@@ -292,8 +297,8 @@ def _comparison_block(run: WorkContinuityRun) -> dict[str, object]:
         "treatment_recorded": TREATMENT_ARM_ID in recorded,
         "baselines_selected": list(baselines),
         "baselines_recorded": [baseline for baseline in baselines if baseline in recorded],
-        "compared_host_count": len(compared_hosts),
-        "compared_hosts": list(compared_hosts),
+        "compared_pair_count": len(compared_pairs),
+        "compared_pairs": [[task_id, host] for task_id, host in compared_pairs],
     }
 
 
@@ -432,24 +437,31 @@ def execution_configuration(attempts: AttemptSet | None) -> list[dict[str, objec
     The configuration is retained rather than only used for validation, so a
     reader can see which model and host revision produced the outcomes and can
     tell a method difference from a configuration difference. Each entry also
-    carries how many recordings that host contributed, because the comparison
-    gate has to weigh a configuration by its share of the outcomes and not only
-    notice that it appears somewhere.
+    carries how many recordings that host contributed and how those recordings
+    were distributed over the tasks, because the comparison gate has to weigh a
+    configuration by its share of the outcomes *per task*: two runs can agree on
+    the hosts, the models, the host revisions and the totals while assigning the
+    two tasks to the two models the other way round, and with task-specific model
+    behaviour that swap alone moves the success counts.
     """
 
     if attempts is None:
         return []
     by_host: dict[str, tuple[str, str]] = {}
     counts: dict[str, int] = {}
+    by_task: dict[str, dict[str, int]] = {}
     for attempt in attempts.attempts:
         by_host.setdefault(attempt.host, attempt.configuration)
         counts[attempt.host] = counts.get(attempt.host, 0) + 1
+        per_task = by_task.setdefault(attempt.host, {})
+        per_task[attempt.task_id] = per_task.get(attempt.task_id, 0) + 1
     return [
         {
             "host": host,
             "host_revision": configuration[0],
             "model": configuration[1],
             "attempt_count": counts[host],
+            "tasks": dict(sorted(by_task[host].items())),
         }
         for host, configuration in sorted(by_host.items())
     ]

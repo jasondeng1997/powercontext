@@ -21,6 +21,7 @@ method, so most of these tests exercise refusals rather than successes.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -55,15 +56,18 @@ def manifest(
     host_revision: str = "runtime-1",
     model: str = "model-1",
     attempt_count: int = 8,
+    tasks: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     """Build the manifest subset the comparability gate reads.
 
     The host revision defaults to a value that does not embed the host name, so a
     test that changes only the host name is about the host name. The attempt count
-    is part of the block because the gate compares how the recordings were
-    allocated between configurations, not only which configurations appear.
+    and the per-task breakdown are part of the block because the gate compares
+    which configuration recorded which task, and how many times, not only which
+    configurations appear.
     """
 
+    per_task = dict(tasks) if tasks is not None else {task_ids[0]: attempt_count}
     return {
         "run_id": run_id,
         "host": host,
@@ -73,18 +77,41 @@ def manifest(
         "experiment_arm": arm_manifest_record(get_continuation_arm(arm_id), max_bytes=max_bytes),
         "revisions": {"powercontext": powercontext, "integration": integration},
         "execution_configuration": [
-            {"host": host, "host_revision": host_revision, "model": model, "attempt_count": attempt_count},
+            {
+                "host": host,
+                "host_revision": host_revision,
+                "model": model,
+                "attempt_count": sum(per_task.values()),
+                "tasks": per_task,
+            },
         ],
     }
 
 
-def allocation(models: list[str], *, arm_id: str = "full-transcript-v1", attempt_count: int = 8) -> dict[str, Any]:
-    """One manifest whose hosts are split across `models`, one host per entry."""
+def allocation(
+    models: list[str],
+    *,
+    arm_id: str = "full-transcript-v1",
+    attempt_count: int = 8,
+    tasks: list[dict[str, int]] | None = None,
+) -> dict[str, Any]:
+    """One manifest whose hosts are split across `models`, one host per entry.
+
+    ``tasks`` optionally gives each host's per-task recording counts, in the same
+    order as ``models``; the default puts every attempt on the first declared task.
+    """
 
     built = manifest(arm_id, attempt_count=attempt_count)
     built["hosts"] = [f"host-{index}" for index in range(len(models))]
+    per_host = tasks if tasks is not None else [{"t-coding": attempt_count} for _ in models]
     built["execution_configuration"] = [
-        {"host": f"host-{index}", "host_revision": "runtime-1", "model": model, "attempt_count": attempt_count}
+        {
+            "host": f"host-{index}",
+            "host_revision": "runtime-1",
+            "model": model,
+            "attempt_count": sum(per_host[index].values()),
+            "tasks": dict(per_host[index]),
+        }
         for index, model in enumerate(models)
     ]
     return built
@@ -220,8 +247,8 @@ def test_a_changed_configuration_allocation_is_not_comparable() -> None:
         ensure_comparable_work_continuity_runs(one_of_ten, nine_of_ten)
 
     message = str(error.value)
-    assert "runtime-1/model-a x8" in message
-    assert "runtime-1/model-a x72" in message
+    assert "runtime-1/model-a (t-coding x8)" in message
+    assert "runtime-1/model-a (t-coding x72)" in message
 
 
 def test_the_same_configuration_allocation_is_comparable_under_renamed_hosts() -> None:
@@ -246,16 +273,59 @@ def test_a_manifest_whose_entries_lost_their_attempt_counts_is_not_comparable() 
         ensure_comparable_work_continuity_runs(allocation(["model-a"]), forged)
 
 
+def test_a_manifest_whose_task_breakdown_does_not_add_up_is_not_comparable() -> None:
+    """A block whose parts disagree with its total cannot state the allocation."""
+
+    forged = allocation(["model-a"])
+    forged["execution_configuration"][0]["tasks"] = {"t-coding": 3}  # type: ignore[index]
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration is missing or malformed"):
+        ensure_comparable_work_continuity_runs(allocation(["model-a"]), forged)
+
+
 def test_weighting_the_attempts_differently_across_the_same_hosts_is_not_comparable() -> None:
     """Two hosts on two models, but the recordings sit mostly on the other one."""
 
     first = allocation(["model-a", "model-b"], attempt_count=4)
     second = allocation(["model-a", "model-b"], attempt_count=4)
     second["execution_configuration"][0]["attempt_count"] = 20  # type: ignore[index]
+    second["execution_configuration"][0]["tasks"] = {"t-coding": 20}  # type: ignore[index]
     second["execution_configuration"][1]["attempt_count"] = 2  # type: ignore[index]
+    second["execution_configuration"][1]["tasks"] = {"t-coding": 2}  # type: ignore[index]
 
     with pytest.raises(ContinuationArmError, match="execution_configuration allocation"):
         ensure_comparable_work_continuity_runs(first, second)
+
+
+def test_sending_a_task_to_another_model_is_not_comparable() -> None:
+    """Equal totals still hide which task each configuration recorded.
+
+    A task is scored on its own declared next action, so two runs that agree on
+    every host, model, revision and total can still move success counts purely by
+    handing the same task to the other model.
+    """
+
+    first = allocation(["model-a", "model-b"], attempt_count=1, tasks=[{"t-coding": 1}, {"t-doc": 1}])
+    second = allocation(["model-a", "model-b"], attempt_count=1, tasks=[{"t-doc": 1}, {"t-coding": 1}])
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration allocation") as error:
+        ensure_comparable_work_continuity_runs(first, second)
+
+    message = str(error.value)
+    assert "runtime-1/model-a (t-coding x1)" in message
+    assert "runtime-1/model-a (t-doc x1)" in message
+
+
+def test_the_same_per_task_allocation_is_comparable_under_renamed_hosts() -> None:
+    """Host names stay outside the comparison even when tasks are split across hosts."""
+
+    first = allocation(["model-a", "model-b"], attempt_count=1, tasks=[{"t-coding": 1}, {"t-doc": 1}])
+    second = allocation(["model-a", "model-b"], attempt_count=1, tasks=[{"t-coding": 1}, {"t-doc": 1}])
+    second["hosts"] = ["integration-one", "integration-two"]
+    for index, entry in enumerate(second["execution_configuration"]):  # type: ignore[union-attr]
+        entry["host"] = ["integration-one", "integration-two"][index]
+
+    ensure_comparable_work_continuity_runs(first, second)
 
 
 @pytest.mark.parametrize(

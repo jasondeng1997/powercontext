@@ -123,19 +123,20 @@ def render_markdown(payload: dict[str, object]) -> str:
                 "",
                 (
                     "The model and host revision that produced each host's recordings. Outcomes are only compared "
-                    "within one host, and a host that reports two configurations is rejected before scoring, so a "
-                    "configuration difference cannot be read as a method difference. The recorded attempts each host "
-                    "contributed are shown too, because the comparison gate weighs a configuration by its share of "
-                    "the outcomes rather than only noticing that it appears somewhere."
+                    "within one task on one host, and a host that reports two configurations is rejected before "
+                    "scoring, so a configuration difference cannot be read as a method difference. The recordings "
+                    "each host contributed are shown per task, because the comparison gate weighs a configuration "
+                    "by which task it recorded and how many times, not only by whether it appears somewhere."
                 ),
                 "",
-                "| Host | Host revision | Model | Recorded attempts |",
-                "| --- | --- | --- | ---: |",
+                "| Host | Host revision | Model | Recorded attempts | Recorded tasks |",
+                "| --- | --- | --- | ---: | --- |",
             ]
         )
         for entry in configuration:
             lines.append(
-                f"| `{entry['host']}` | `{entry['host_revision']}` | `{entry['model']}` | {entry['attempt_count']} |"
+                f"| `{entry['host']}` | `{entry['host_revision']}` | `{entry['model']}` | "
+                f"{entry['attempt_count']} | {_task_allocation(entry.get('tasks'))} |"
             )
         lines.append("")
     lines.extend(
@@ -253,10 +254,10 @@ def render_markdown(payload: dict[str, object]) -> str:
     )
     if not available:
         lines.append("No comparison was performed, because recording coverage is unavailable for this run.")
-    elif _compared_host_count(comparison) == 0:
+    elif _compared_pair_count(comparison) == 0:
         lines.append(f"No comparison was performed: {_comparison_reason(comparison)}.")
     elif not underperformance:
-        lines.append("The treatment did not rank below a baseline on any host in this run.")
+        lines.append("The treatment did not rank below a baseline for any task and host in this run.")
     for entry in underperformance:
         beaten_by = entry.get("beaten_by")
         if not isinstance(beaten_by, list):
@@ -470,8 +471,8 @@ def _boundaries(run: WorkContinuityRun) -> list[str]:
         ),
         (
             "Recording coverage is not comparison coverage: a comparison exists only where the treatment and a "
-            "baseline were both recorded on one host, so a run can record every selected method and still report "
-            "that no comparison was performed."
+            "baseline were both recorded on the same task and host, so a run can record every selected method and "
+            "still report that no comparison was performed."
         ),
     ]
     if run.analysis is None:
@@ -516,6 +517,16 @@ def _inline_counts(counts: object) -> str:
     return rendered or "none"
 
 
+def _task_allocation(tasks: object) -> str:
+    """Render one host's per-task recording counts for the configuration table."""
+
+    if not isinstance(tasks, dict):
+        raise ReportError("report payload execution_configuration[].tasks must be an object")
+    if not tasks:
+        return "none"
+    return ", ".join(f"`{task_id}` x{count}" for task_id, count in sorted(tasks.items()))
+
+
 def _analysis_available(failure: dict[str, object]) -> bool:
     """Return whether the run recorded anything it could classify.
 
@@ -533,17 +544,17 @@ def _unavailable_reason(failure: dict[str, object]) -> str:
     return reason if isinstance(reason, str) and reason.strip() else "no recorded attempts were supplied"
 
 
-def _compared_host_count(comparison: dict[str, object]) -> int:
-    """Return how many hosts held both the treatment and a baseline recording.
+def _compared_pair_count(comparison: dict[str, object]) -> int:
+    """Return how many task/host units held both the treatment and a baseline.
 
     Recording coverage only says every selected pair has an attempt. A comparison
-    needs a pair to compare, so this is what separates "nothing looked wrong" from
-    "nothing was looked at".
+    needs a pair to compare *of the same task on the same host*, so this is what
+    separates "nothing looked wrong" from "nothing was looked at".
     """
 
-    count = comparison.get("compared_host_count")
+    count = comparison.get("compared_pair_count")
     if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-        raise ReportError("report payload comparison.compared_host_count must be a non-negative integer")
+        raise ReportError("report payload comparison.compared_pair_count must be a non-negative integer")
     return count
 
 
@@ -568,6 +579,6 @@ def _comparison_reason(comparison: dict[str, object]) -> str:
     if not recorded:
         return "no baseline arm has a recorded attempt in this run"
     return (
-        "the treatment and its baselines were recorded on different hosts, and this benchmark "
-        "only compares within one host"
+        "the treatment and its baselines were never recorded on the same task and host, and this benchmark "
+        "only compares one task on one host at a time"
     )

@@ -121,7 +121,13 @@ def test_validate_also_checks_recorded_attempts(tmp_path: Path) -> None:
     assert body["recording_protocol"]["task_lock_sha256"] == body["task_lock_sha256"]
     assert body["recording_protocol"]["assembly_max_bytes"] == 16_000
     assert body["execution_configuration"] == [
-        {"host": HOST, "host_revision": f"{HOST}@1", "model": "declared-model", "attempt_count": 8}
+        {
+            "host": HOST,
+            "host_revision": f"{HOST}@1",
+            "model": "declared-model",
+            "attempt_count": 8,
+            "tasks": {"t-audit": 4, "t-doc": 4},
+        }
     ]
 
 
