@@ -44,7 +44,9 @@ of any method, and injected bytes measure the method instead of the allowance.
 
 `ensure_comparable_work_continuity_runs` rejects a comparison whose task set digest, task
 selection, byte ceiling, PowerContext/integration revisions, or recorded execution
-configuration differ. The host *name* is deliberately not part of that check: a host is a
+configuration differ, and rejects a pair of runs that share no continuation arm at all — two
+runs pairing disjoint methods have no method in common for an observed difference to be
+attributed to. The host *name* is deliberately not part of that check: a host is a
 declared dimension of this evaluation, and the arm is exactly the intended difference. What is
 part of it is the model and host revision that produced the recordings, **and how the
 recordings were allocated between them**: a run that put model A on one host and model B on
@@ -53,6 +55,11 @@ counts while both runs list the same two models. A manifest whose execution conf
 cannot show its allocation — a missing block, a missing attempt count, a non-positive count, or
 a task entry that is a bare count rather than a per-method one — is refused rather than assumed
 equal.
+
+The gate is reachable from the command line, not only from the library:
+`powercontext-eval work-continuity compare --baseline <run> --treatment <run>` applies exactly
+these checks to two published run directories and exits non-zero with the disagreements it
+found.
 
 ## Task set and ground truth
 

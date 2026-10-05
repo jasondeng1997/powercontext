@@ -34,6 +34,7 @@ from powercontext_eval.benchmarks.work_continuity.arms import (
     FULL_TRANSCRIPT,
     INFORMAL_SUMMARY,
     ROLLOVER_HANDOFF,
+    supported_continuation_arm_ids,
 )
 from powercontext_eval.cli import app
 
@@ -391,3 +392,96 @@ def test_run_rejects_an_unknown_arm_as_a_usage_error(tmp_path: Path) -> None:
     assert result.exit_code == 2
     assert "unknown continuation arm" in result.output
     assert not (tmp_path / "bad-arm").exists()
+
+
+def record_run(tmp_path: Path, lock: Path, attempts: Path, name: str, *extra: str) -> Path:
+    """Run the benchmark once and return the run directory it wrote.
+
+    The revisions are declared because the gate refuses a run that leaves them out
+    rather than treating two unknowns as equal.
+    """
+
+    output = tmp_path / name
+    payload(
+        CliRunner().invoke(
+            app,
+            [
+                "work-continuity",
+                "run",
+                "--task-lock",
+                str(lock),
+                "--attempts",
+                str(attempts),
+                "--output-dir",
+                str(output),
+                "--run-id",
+                name,
+                "--powercontext-revision",
+                "pc-1",
+                "--integration-revision",
+                "int-1",
+                *extra,
+            ],
+        )
+    )
+    return output
+
+
+def test_compare_accepts_two_runs_that_differ_only_by_their_identity(tmp_path: Path) -> None:
+    """The gate runs on published runs, not only from a test."""
+
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    first = record_run(tmp_path, lock, attempts, "run-a")
+    second = record_run(tmp_path, lock, attempts, "run-b")
+
+    body = payload(
+        CliRunner().invoke(
+            app,
+            ["work-continuity", "compare", "--baseline", str(first), "--treatment", str(second)],
+        )
+    )
+
+    assert body["classification"] == "work-continuity-comparability"
+    assert body["comparable"] is True
+    assert body["baseline_run_id"] == "run-a"
+    assert body["treatment_run_id"] == "run-b"
+    assert body["task_set_id"] == "test-set"
+    assert body["shared_arms"] == sorted(supported_continuation_arm_ids())
+
+
+def test_compare_refuses_a_run_recorded_under_another_ceiling(tmp_path: Path) -> None:
+    """A refused comparison says which pinned field disagreed."""
+
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    first = record_run(tmp_path, lock, attempts, "run-a")
+    second = record_run(tmp_path, lock, attempts, "run-b")
+    manifest = second / "run-manifest.json"
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["assembly"]["max_bytes"] = 4_000
+    manifest.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["work-continuity", "compare", "--baseline", str(first), "--treatment", str(second)],
+    )
+
+    assert result.exit_code == 1
+    assert "Work-continuity comparison refused" in result.output
+    assert "assembly.max_bytes" in result.output
+
+
+def test_compare_reports_a_manifest_it_cannot_read(tmp_path: Path) -> None:
+    lock = analysis_lock(tmp_path)
+    attempts = write_attempts(tmp_path, full_coverage(lock), lock=lock)
+    first = record_run(tmp_path, lock, attempts, "run-a")
+
+    result = CliRunner().invoke(
+        app,
+        ["work-continuity", "compare", "--baseline", str(first), "--treatment", str(tmp_path / "absent")],
+    )
+
+    assert result.exit_code == 1
+    assert "Work-continuity comparison failed" in result.output
+    assert "no run manifest" in result.output

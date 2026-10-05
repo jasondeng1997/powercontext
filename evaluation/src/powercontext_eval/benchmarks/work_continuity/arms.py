@@ -198,6 +198,30 @@ def arm_manifest_record(arm: ContinuationArm, *, max_bytes: int) -> dict[str, ob
     }
 
 
+def declared_run_arm_ids(manifest: Mapping[str, object]) -> tuple[str, ...] | None:
+    """Return the registered continuation arms a run manifest declares, sorted.
+
+    ``comparable_arms`` is the arm set the run selected, which is what a
+    comparison has to read: ``experiment_arm`` is only the first of them. A
+    manifest whose arm set is absent, empty, or names an unregistered arm yields
+    ``None``, so a caller can refuse the comparison instead of reading a missing
+    set as an arm the other run happens to share.
+    """
+
+    records = manifest.get("comparable_arms")
+    if not isinstance(records, list) or not records:
+        return None
+    ids: set[str] = set()
+    for record in records:
+        if not isinstance(record, Mapping):
+            return None
+        arm_id = record.get("id")
+        if not isinstance(arm_id, str) or arm_id not in _ARMS_BY_ID:
+            return None
+        ids.add(arm_id)
+    return tuple(sorted(ids))
+
+
 def ensure_comparable_work_continuity_runs(
     manifest_a: Mapping[str, object],
     manifest_b: Mapping[str, object],
@@ -216,11 +240,17 @@ def ensure_comparable_work_continuity_runs(
     one method — so a run that ran a method on one model is not comparable with
     one that ran that method on the other, because any of those differences would
     be read as a continuation-method difference.
+
+    The two runs must also share at least one arm. The gate exists to hold every
+    declared condition fixed and let the arm vary, which only means anything if
+    some method was measured on both sides; two runs selecting disjoint methods
+    have no method in common for an observed difference to be attributed to.
     """
 
     differences: list[str] = []
     differences.extend(_unregistered_arm_differences(manifest_a, "first manifest"))
     differences.extend(_unregistered_arm_differences(manifest_b, "second manifest"))
+    differences.extend(_shared_arm_differences(manifest_a, manifest_b))
     for path in _COMPARED_MANIFEST_PATHS:
         name = ".".join(path)
         value_a = _manifest_value(manifest_a, path)
@@ -232,6 +262,26 @@ def ensure_comparable_work_continuity_runs(
     differences.extend(_configuration_differences(manifest_a, manifest_b))
     if differences:
         raise ContinuationArmError("runs are not comparable: " + "; ".join(differences))
+
+
+def _shared_arm_differences(manifest_a: Mapping[str, object], manifest_b: Mapping[str, object]) -> list[str]:
+    """Refuse a comparison between two runs that share no continuation arm.
+
+    A run that measured only the treatment cannot be compared against one that
+    measured only a baseline, and a run pairing two methods cannot be compared
+    against one pairing the other two: no method appears on both sides, so nothing
+    in the observed difference belongs to a continuation method.
+    """
+
+    arms_a = declared_run_arm_ids(manifest_a)
+    arms_b = declared_run_arm_ids(manifest_b)
+    if arms_a is None:
+        return ["first manifest has no usable comparable_arms record"]
+    if arms_b is None:
+        return ["second manifest has no usable comparable_arms record"]
+    if not set(arms_a) & set(arms_b):
+        return [f"the runs share no continuation arm ({', '.join(arms_a)} vs {', '.join(arms_b)})"]
+    return []
 
 
 def _configuration_differences(manifest_a: Mapping[str, object], manifest_b: Mapping[str, object]) -> list[str]:

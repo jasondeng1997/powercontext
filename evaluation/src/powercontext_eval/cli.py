@@ -76,6 +76,8 @@ from powercontext_eval.benchmarks.swebench_pro.catalog import PUBLIC_V2_TASK_SET
 from powercontext_eval.benchmarks.work_continuity.arms import (
     DEFAULT_ASSEMBLY_MAX_BYTES,
     ContinuationArmError,
+    declared_run_arm_ids,
+    ensure_comparable_work_continuity_runs,
     supported_continuation_arm_ids,
 )
 from powercontext_eval.benchmarks.work_continuity.attempts import (
@@ -700,6 +702,64 @@ def work_continuity_validate(
                     }
                 ),
                 "execution_configuration": None if recorded is None else execution_configuration(recorded),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+    )
+
+
+def _run_manifest(path: Path) -> dict[str, object]:
+    """Read one run manifest from a run directory or from a manifest file.
+
+    A published run is a directory, so accepting the directory is what makes the
+    command usable on the artifacts a run actually writes.
+    """
+
+    candidate = path / "run-manifest.json" if path.is_dir() else path
+    if not candidate.is_file():
+        raise WorkContinuityRunError(f"no run manifest at {candidate}")
+    try:
+        payload = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise WorkContinuityRunError(f"cannot read run manifest {candidate}: {error}") from None
+    if not isinstance(payload, dict):
+        raise WorkContinuityRunError(f"run manifest {candidate} is not a JSON object")
+    return cast("dict[str, object]", payload)
+
+
+@work_continuity_app.command("compare")
+def work_continuity_compare(
+    baseline: Annotated[Path, typer.Option("--baseline")],
+    treatment: Annotated[Path, typer.Option("--treatment")],
+) -> None:
+    """Decide whether two recorded runs may be compared, and refuse when they may not."""
+
+    try:
+        first = _run_manifest(baseline)
+        second = _run_manifest(treatment)
+        # The gate is the whole point of the command: it is the only supported way
+        # to have the documented comparison rules applied to two published runs.
+        ensure_comparable_work_continuity_runs(first, second)
+    except ContinuationArmError as error:
+        typer.echo(f"Work-continuity comparison refused: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    except WorkContinuityRunError as error:
+        typer.echo(f"Work-continuity comparison failed: {error}", err=True)
+        raise typer.Exit(code=1) from None
+    first_arms = declared_run_arm_ids(first) or ()
+    second_arms = declared_run_arm_ids(second) or ()
+    typer.echo(
+        json.dumps(
+            {
+                "classification": "work-continuity-comparability",
+                "comparable": True,
+                "baseline_run_id": first.get("run_id"),
+                "treatment_run_id": second.get("run_id"),
+                "task_set_id": first.get("task_set_id"),
+                "baseline_arms": list(first_arms),
+                "treatment_arms": list(second_arms),
+                "shared_arms": sorted(set(first_arms) & set(second_arms)),
             },
             ensure_ascii=False,
             sort_keys=True,

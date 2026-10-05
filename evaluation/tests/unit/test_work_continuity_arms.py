@@ -34,6 +34,7 @@ from powercontext_eval.benchmarks.work_continuity.arms import (
     TREATMENT_ARM_ID,
     ContinuationArmError,
     arm_manifest_record,
+    declared_run_arm_ids,
     ensure_comparable_work_continuity_runs,
     get_continuation_arm,
     resolve_continuation_arms,
@@ -57,6 +58,7 @@ def manifest(
     model: str = "model-1",
     attempt_count: int = 8,
     tasks: Mapping[str, Mapping[str, int]] | None = None,
+    arms: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Build the manifest subset the comparability gate reads.
 
@@ -64,7 +66,9 @@ def manifest(
     test that changes only the host name is about the host name. The attempt count
     and the per-task, per-method breakdown are part of the block because the gate
     compares which configuration recorded which ``(task, method)`` unit, and how
-    many times, not only which configurations appear.
+    many times, not only which configurations appear. ``arms`` is the run's
+    declared arm set and defaults to the shipped selection, so a comparison is
+    about the compared fields unless a test says otherwise.
     """
 
     per_task = _task_units(tasks) if tasks is not None else {task_ids[0]: {arm_id: attempt_count}}
@@ -75,6 +79,10 @@ def manifest(
         "inputs": {"task_lock": {"content_sha256": task_lock_digest}},
         "assembly": {"max_bytes": max_bytes},
         "experiment_arm": arm_manifest_record(get_continuation_arm(arm_id), max_bytes=max_bytes),
+        "comparable_arms": [
+            arm_manifest_record(get_continuation_arm(value), max_bytes=max_bytes)
+            for value in (supported_continuation_arm_ids() if arms is None else arms)
+        ],
         "revisions": {"powercontext": powercontext, "integration": integration},
         "execution_configuration": [
             {
@@ -206,6 +214,66 @@ def test_arm_manifest_record_pins_the_budget_alongside_the_method() -> None:
     assert record["transcript_head_turns"] == 2
     assert record["transcript_tail_turns"] == 4
     assert record["assembly_max_bytes"] == 4_096
+
+
+def test_declared_arm_ids_read_the_whole_selection_not_only_the_experiment_arm() -> None:
+    """The run's arm set is what a comparison has to read, and it is validated."""
+
+    assert declared_run_arm_ids(manifest("full-transcript-v1")) == tuple(sorted(supported_continuation_arm_ids()))
+    assert declared_run_arm_ids(manifest("full-transcript-v1", arms=("rollover-handoff-v1",))) == (
+        "rollover-handoff-v1",
+    )
+
+    forged = {**manifest("full-transcript-v1"), "comparable_arms": [{"id": "made-up-v1"}]}
+    assert declared_run_arm_ids(forged) is None
+    assert declared_run_arm_ids({"comparable_arms": []}) is None
+    assert declared_run_arm_ids({}) is None
+
+
+def test_runs_that_share_no_continuation_arm_are_not_comparable() -> None:
+    """No method was measured on both sides, so no method can explain the difference.
+
+    These two runs compare full-transcript against Handoff and compacted against
+    informal, and they agree on every pinned field, so without the arm-set rule the
+    gate would accept two disjoint experiments as one comparison.
+    """
+
+    with pytest.raises(ContinuationArmError, match="share no continuation arm") as error:
+        ensure_comparable_work_continuity_runs(
+            manifest("full-transcript-v1", arms=("full-transcript-v1", "rollover-handoff-v1")),
+            manifest("compacted-transcript-v1", arms=("compacted-transcript-v1", "informal-summary-v1")),
+        )
+
+    message = str(error.value)
+    assert "full-transcript-v1, rollover-handoff-v1" in message
+    assert "compacted-transcript-v1, informal-summary-v1" in message
+
+
+def test_overlapping_arm_sets_are_comparable() -> None:
+    """The rule is that a method is shared, not that the selections are equal."""
+
+    recorded = {"t-coding": {"full-transcript-v1": 4, "rollover-handoff-v1": 4}}
+    ensure_comparable_work_continuity_runs(
+        manifest("full-transcript-v1", tasks=recorded, arms=("full-transcript-v1", "rollover-handoff-v1")),
+        manifest(
+            "rollover-handoff-v1",
+            tasks=recorded,
+            arms=("full-transcript-v1", "rollover-handoff-v1", "informal-summary-v1"),
+        ),
+    )
+
+
+def test_a_manifest_that_cannot_show_its_arm_set_is_not_comparable() -> None:
+    """A run that does not declare its arms cannot be shown to share one."""
+
+    forged = manifest("full-transcript-v1")
+    del forged["comparable_arms"]
+
+    with pytest.raises(ContinuationArmError, match="first manifest has no usable comparable_arms record"):
+        ensure_comparable_work_continuity_runs(forged, manifest("full-transcript-v1"))
+
+    with pytest.raises(ContinuationArmError, match="second manifest has no usable comparable_arms record"):
+        ensure_comparable_work_continuity_runs(manifest("full-transcript-v1"), {**forged, "comparable_arms": 7})
 
 
 def test_manifests_differing_only_by_the_arm_are_comparable() -> None:
