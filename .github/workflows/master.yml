@@ -89,16 +89,21 @@ jobs:
           set -o pipefail
           make evaluation-unit-test 2>&1 | tee evaluation/pytest.log
 
-      # A pull request from a fork cannot read this run's raw job log, so a red
-      # check has to name what failed somewhere the contributor can see it;
-      # otherwise a failure here is an exit code and nothing else. The tail is
-      # kept for the case that matters most — a run that never reached the tests,
-      # where the summary has no failing case to list.
+      # A pull request from a fork cannot read this run's raw job log — the log
+      # endpoint answers `Must have admin rights to Repository` — so a red check
+      # is otherwise an exit code and nothing else. Both the step summary and an
+      # annotation are readable by the contributor, and the annotation is the one
+      # that still says something when the failure happened before the tests ran.
       - name: Report the failing cases
         if: failure()
         run: |
           {
             echo "### evaluation unit tests"
+            echo
+            echo '```'
+            uv --version || true
+            python3 -V || true
+            echo '```'
             echo
             if grep -qE '^(FAILED|ERROR) ' evaluation/pytest.log; then
               echo '```'
@@ -112,6 +117,9 @@ jobs:
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          detail=$(tail -n 25 evaluation/pytest.log | awk '{gsub(/%/, "%25"); gsub(/\r/, "%0D"); printf "%s%%0A", $0}')
+          echo "::error title=evaluation unit tests failed::${detail}"
 
   code-seekdb:
     timeout-minutes: 20
