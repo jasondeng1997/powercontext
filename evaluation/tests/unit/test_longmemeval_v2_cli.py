@@ -889,7 +889,12 @@ def test_longmemeval_v2_run_smoke_rejects_a_non_usd_price_policy() -> None:
 
 
 def test_longmemeval_v2_run_smoke_rejects_a_non_json_price_policy() -> None:
-    result = CliRunner().invoke(
+    # The rejection is rendered into a panel whose width follows the terminal, and
+    # a narrow one wraps the sentence mid-word (`must b` / `e a JSON object`), so
+    # the message below would not be found even though it was printed. The
+    # terminal width is pinned rather than the assertion loosened, because what is
+    # being asserted is the sentence, not how the panel laid it out.
+    result = CliRunner(env={"COLUMNS": "200"}).invoke(
         app,
         [
             "longmemeval-v2",
