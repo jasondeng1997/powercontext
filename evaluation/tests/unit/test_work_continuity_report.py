@@ -256,16 +256,26 @@ def test_a_recorded_run_reports_its_coverage_and_comparison(recorded: WorkContin
 
 
 def test_the_report_separates_delivered_quality_from_draft_quality(recorded: WorkContinuityRun) -> None:
-    methods = {method["arm_id"]: method for method in rows(report_payload(recorded), "methods")}
+    payload = report_payload(recorded)
+    methods = {method["arm_id"]: method for method in rows(payload, "methods")}
     treatment = block(methods[TREATMENT_ARM_ID], "context_quality")
 
+    assert treatment["applicable"] is True
     assert treatment["checked_task_count"] == 2
     assert treatment["satisfied_task_count"] == 2
     assert treatment["draft_checked_task_count"] == 2
     assert treatment["draft_satisfied_task_count"] == 2
     # A transcript method carries no rollover draft, so nothing is checked for it.
-    assert block(methods[FULL_TRANSCRIPT.arm_id], "context_quality")["checked_task_count"] == 0
-    assert "## Delivered context quality" in render_markdown(report_payload(recorded))
+    # Its zeros are the absence of a check, and the table has to say so rather than
+    # render a measured "0 of 0 satisfied".
+    baseline = block(methods[FULL_TRANSCRIPT.arm_id], "context_quality")
+    assert baseline["applicable"] is False
+    assert baseline["checked_task_count"] == 0
+
+    markdown = render_markdown(payload)
+    assert "## Delivered context quality" in markdown
+    assert f"| `{FULL_TRANSCRIPT.arm_id}` | n/a | n/a | n/a | n/a |" in markdown
+    assert f"| `{TREATMENT_ARM_ID}` | 2 | 2 | 2 | 2 |" in markdown
 
 
 def test_the_report_renders_the_recorded_execution_configuration(recorded: WorkContinuityRun) -> None:

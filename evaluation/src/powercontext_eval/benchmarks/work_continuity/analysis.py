@@ -311,7 +311,7 @@ def classify_failure(
     ):
         return None
     needed = set(task.expected_next_action.required_fact_ids)
-    if needed & facts_lost_to_the_budget(task, context):
+    if (needed & facts_lost_to_the_budget(task, context)) or context.next_action_lost_to_the_budget:
         return BUDGET_TRUNCATION
     if not needed <= set(context.delivered_fact_ids):
         return CONTEXT_ABSENT
@@ -334,6 +334,10 @@ def facts_lost_to_the_budget(task: ContinuationTask, context: ContinuationContex
     context, which in turn advises widening a window that already selected every
     turn. Only items the budget removed are considered, so a turn the arm's own
     window never selected stays a context-absence question instead.
+
+    The list is the *facts* the ceiling removed; the next action is a carrier of
+    its own and is reported by ``ContinuationContext.next_action_lost_to_the_budget``,
+    because a ceiling that stops before the action removes no fact at all.
     """
 
     dropped = set(context.dropped_item_ids)
@@ -344,6 +348,27 @@ def facts_lost_to_the_budget(task: ContinuationTask, context: ContinuationContex
         if f"turn:{int(fact.evidence.split(':', 1)[1])}" in dropped:
             lost.add(fact.fact_id)
     return lost
+
+
+def _budget_detail(score: AttemptScore, task: ContinuationTask, context: ContinuationContext) -> str:
+    """Name what the ceiling removed, including an action dropped without its facts.
+
+    A ceiling that stops before the next action removes the action itself rather
+    than any fact the action depends on, so the message has to be able to report a
+    loss with no fact ids attached to it.
+    """
+
+    lost = sorted(facts_lost_to_the_budget(task, context))
+    facts = f"required facts ({', '.join(lost)})" if lost else ""
+    action = "the next action itself" if context.next_action_lost_to_the_budget else ""
+    removed = " and ".join(part for part in (facts, action) if part)
+    if not removed:
+        # Only reachable if the ceiling is credited with a loss the context does
+        # not report; say so rather than naming a removal that did not happen.
+        return f"the {score.max_bytes} byte ceiling reported no removal"
+    carriers = [item for item in context.dropped_item_ids if item.startswith("state:")]
+    carried_by = f"the state items {', '.join(carriers)}" if carriers else "the turns their evidence lives in"
+    return f"the {score.max_bytes} byte ceiling dropped {removed} together with {carried_by}"
 
 
 def analyse_task_outcomes(task: ContinuationTask, outcomes: Sequence[ArmOutcome]) -> TaskAnalysis:
@@ -379,10 +404,7 @@ def _detail(failure_class: str, task: ContinuationTask, outcome: ArmOutcome) -> 
     if score is None:
         return "no attempt recorded for this task and method"
     if failure_class == BUDGET_TRUNCATION:
-        lost = ", ".join(sorted(facts_lost_to_the_budget(task, outcome.context)))
-        carriers = [item for item in outcome.context.dropped_item_ids if item.startswith("state:")]
-        carried_by = f"state items {', '.join(carriers)}" if carriers else "the turns their evidence lives in"
-        return f"the {score.max_bytes} byte ceiling dropped required facts ({lost}) together with {carried_by}"
+        return _budget_detail(score, task, outcome.context)
     if failure_class == CONTEXT_ABSENT:
         missing = ", ".join(score.facts_missing_from_context)
         return f"the context never delivered facts the next action depends on: {missing}"

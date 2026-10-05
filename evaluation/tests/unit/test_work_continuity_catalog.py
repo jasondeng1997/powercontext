@@ -37,6 +37,11 @@ from powercontext_eval.benchmarks.work_continuity.catalog import (
     WorkContinuityInputError,
 )
 
+# The shipped lock is the benchmark's ground truth, so its digest is pinned here as
+# a golden anchor: an edit to the authored tasks has to be an intentional edit to
+# this constant too, and every number the documentation quotes moves with it.
+SHIPPED_TASK_LOCK_SHA256 = "76f26cb6a0292e6cbce8996e315ce6d6e5b8bfc7815e697a62c42e4453b38cf1"
+
 
 def test_catalog_loads_both_tasks_and_fixes_their_evidence(tmp_path: Path) -> None:
     catalog = TaskCatalog.load(standard_lock(tmp_path))
@@ -252,6 +257,27 @@ def test_attempts_reject_a_host_that_reports_two_execution_configurations(tmp_pa
         load_attempts(write_attempts(tmp_path, entries, lock=lock), catalog=catalog)
 
 
+def test_attempts_reject_a_host_that_reports_two_host_revisions(tmp_path: Path) -> None:
+    """The revision is half the execution configuration, so it is compared too.
+
+    Varying only the model leaves a host whose runtime changed undetected, which
+    would let a runtime difference be read as a method difference.
+    """
+
+    lock = standard_lock(tmp_path)
+    catalog = TaskCatalog.load(lock)
+    entries = [
+        valid_attempt(lock, host_revision="runtime-one"),
+        valid_attempt(lock, arm_id="full-transcript-v1", host_revision="runtime-two"),
+    ]
+
+    with pytest.raises(AttemptInputError, match="reports more than one execution configuration") as error:
+        load_attempts(write_attempts(tmp_path, entries, lock=lock), catalog=catalog)
+
+    assert "runtime-one" in str(error.value)
+    assert "runtime-two" in str(error.value)
+
+
 def test_attempts_reject_an_out_of_order_step_number(tmp_path: Path) -> None:
     lock = standard_lock(tmp_path)
     catalog = TaskCatalog.load(lock)
@@ -359,6 +385,19 @@ def test_shipped_fixture_lock_and_attempts_validate() -> None:
     assert len(attempts.attempts) == len(catalog.tasks) * 4 * len(attempts.hosts)
     assert attempts.protocol.task_lock_sha256 == catalog.content_sha256
     assert attempts.protocol.task_set_id == catalog.task_set_id
+
+
+def test_the_shipped_task_lock_is_pinned_by_its_digest() -> None:
+    """The authored ground truth is anchored, not only read.
+
+    Every published number in `evaluation/docs/work-continuity-benchmark.md` is a
+    property of this file, so an edit to it must be a deliberate edit to the
+    documented numbers as well.
+    """
+
+    catalog = TaskCatalog.load(shipped_locks_dir() / "work-continuity-v1.tasks.json")
+
+    assert catalog.content_sha256 == SHIPPED_TASK_LOCK_SHA256
 
 
 def test_shipped_fixture_binds_every_recording_to_the_context_it_names() -> None:

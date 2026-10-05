@@ -141,10 +141,14 @@ def score_attempt(
                 correction=step.correction,
                 performs_expected_action=performs,
                 # Reading the facts an action depends on is not continuing the
-                # work, and continuing from a replaced plan is not continuing the
-                # declared one. Only a step that does the expected action, on
-                # state that is still current, counts as a recovery.
-                is_recovery=expected <= relied and not superseded and performs,
+                # work, continuing from a replaced plan is not continuing the
+                # declared one, and relying on material the context never
+                # delivered is a contradiction rather than a continuation. Only a
+                # step that does the expected action, on state that is still
+                # current *and was actually delivered*, counts as a recovery: a
+                # recording cannot certify that it continued from a context by
+                # naming a fact that context never carried.
+                is_recovery=expected <= relied and not superseded and performs and not undelivered,
             )
         )
     recoveries = [scored.step for scored in steps if scored.is_recovery]

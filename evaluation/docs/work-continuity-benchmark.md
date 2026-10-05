@@ -116,7 +116,11 @@ fails validation instead of passing a check that only looked at the file's shape
 Recovery also requires the step to have *done* the work. A step counts as recovered only when
 it performed the task's declared next action — naming the facts an action depends on is
 reading, not continuing, and continuing from a superseded plan is not continuing the declared
-one.
+one. It also has to have continued from *this* context: a step that performs the expected
+action while claiming a fact the context never delivered contradicts its own context, so it is
+scored as an evidence conflict rather than as a recovery. Relying on a fact the task declares
+unavailable is different in kind — the fact's absence is disclosed, not contradicted — so it is
+counted as an unverifiable claim and ranks below a clean recovery instead of vetoing success.
 
 `evaluation/locks/work-continuity-v1.attempts-fixture.json` is a synthetic fixture
 (6 tasks × 4 methods × 2 hosts = 48 attempts) that exercises every failure branch. It is
@@ -141,16 +145,22 @@ unactionable list.
 
 `budget_truncation` is claimed whenever the byte ceiling removed material a required fact
 depends on — a dropped `state:*` item *or* a dropped `turn:N` item that carries the fact's
-evidence. Without the second half, a transcript method could never receive this
-classification at all: its state facts are not separate items, so a ceiling that dropped every
-turn holding a required fact's evidence used to be scored as `context_absent`, blaming the
-method for material the budget removed.
+evidence — and whenever the ceiling removed the delivered next action itself. Without the
+second half, a transcript method could never receive this classification at all: its state
+facts are not separate items, so a ceiling that dropped every turn holding a required fact's
+evidence used to be scored as `context_absent`, blaming the method for material the budget
+removed. Without the third, a ceiling that stopped before the next action left every fact the
+action needed in place, so the fallback reported a vague action and recommended changing the
+Handoff contract for a loss the `--max-bytes` flag caused, while the quality table for the same
+context already reported `QR-next-action` as violated.
 
 `QR-*` requirements are the Handoff quality requirements; `IV-*` requirements are the
 "invalid or should require correction" content rules from RFC 1783. Both are enforced
 deterministically by `check_rollover_quality`, against the fields the ceiling actually
 delivered. The complete draft is reported next to that number rather than in place of it, so
-a ceiling that emptied a context cannot certify the requirements it never carried.
+a ceiling that emptied a context cannot certify the requirements it never carried. A method
+that carries no Handoff draft is reported as *not applicable* rather than as `0 of 0
+satisfied`, so "nothing was checked" cannot be read as "checked and found wanting".
 
 Comparisons are scoped per host *and* per execution configuration. A baseline recorded on one
 host can never "beat" the treatment recorded on another, because that comparison would

@@ -97,6 +97,18 @@ class ContinuationContext:
     def line_count(self) -> int:
         return len(self.text.splitlines())
 
+    @property
+    def next_action_lost_to_the_budget(self) -> bool:
+        """Return whether the byte ceiling removed the next action the arm carried.
+
+        The next action is an ordinary droppable item, so a ceiling that runs out
+        before reaching it leaves a context whose state survived and whose action
+        did not. That loss belongs to the ceiling, and reading only the facts the
+        action depends on would report it as a vague action instead.
+        """
+
+        return "next_action" in self.dropped_item_ids
+
 
 def assemble_context(task: ContinuationTask, arm: ContinuationArm, *, max_bytes: int) -> ContinuationContext:
     """Render one task for one arm under one byte ceiling."""

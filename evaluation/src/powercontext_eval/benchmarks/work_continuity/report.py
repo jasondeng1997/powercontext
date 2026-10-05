@@ -190,7 +190,8 @@ def render_markdown(payload: dict[str, object]) -> str:
             (
                 "RFC 1783 requirements checked against the fields that survived the byte ceiling. The complete "
                 "draft is counted next to them, not in place of them, so a budget that emptied a context cannot "
-                "certify it as satisfying the requirements."
+                "certify it as satisfying the requirements. A method that carries no Handoff draft reports "
+                "`n/a`, because it was never checked rather than found wanting."
             ),
             "",
             "| Method | Deliveries checked | Delivered satisfied | Drafts checked | Drafts satisfied |",
@@ -199,10 +200,7 @@ def render_markdown(payload: dict[str, object]) -> str:
     )
     for method in _entries(payload["methods"], "methods"):
         quality = _mapping(method.get("context_quality"), "methods[].context_quality")
-        lines.append(
-            f"| `{method['arm_id']}` | {quality['checked_task_count']} | {quality['satisfied_task_count']} | "
-            f"{quality['draft_checked_task_count']} | {quality['draft_satisfied_task_count']} |"
-        )
+        lines.append(f"| `{method['arm_id']}` | {' | '.join(_quality_columns(quality))} |")
     lines.extend(
         [
             "",
@@ -516,6 +514,24 @@ def _entries(value: object, label: str) -> list[dict[str, object]]:
 def _inline_counts(counts: object) -> str:
     rendered = ", ".join(f"{key}={value}" for key, value in sorted(_mapping(counts, "findings_by_class").items()))
     return rendered or "none"
+
+
+def _quality_columns(quality: dict[str, object]) -> tuple[str, str, str, str]:
+    """Render the four quality columns, or ``n/a`` for a method with no Handoff draft.
+
+    A baseline carries no Handoff draft, so its zeros are the absence of a check
+    rather than a check that found nothing; the block's own applicability flag is
+    what separates the two.
+    """
+
+    if quality.get("applicable") is not True:
+        return ("n/a", "n/a", "n/a", "n/a")
+    return (
+        f"{quality['checked_task_count']}",
+        f"{quality['satisfied_task_count']}",
+        f"{quality['draft_checked_task_count']}",
+        f"{quality['draft_satisfied_task_count']}",
+    )
 
 
 def _task_allocation(tasks: object) -> str:

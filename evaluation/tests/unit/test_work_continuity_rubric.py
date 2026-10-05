@@ -221,6 +221,38 @@ def test_a_reliance_on_unavailable_evidence_is_an_unverifiable_claim(catalog: Ta
     assert score.task_success is True
 
 
+def test_a_step_that_relies_on_undelivered_material_is_not_a_recovery(catalog: TaskCatalog) -> None:
+    """Recovery cannot be certified by naming a fact the context never carried.
+
+    The step carries out the expected action while also claiming a fact the
+    compacted context never delivered, so the recording contradicts its own
+    context: the action may have been performed, but not from this continuation.
+    Dropping the extra reliance is what makes the same step a recovery again.
+    """
+
+    task = catalog.require("t-audit")
+    context = context_for(catalog, "t-audit", COMPACTED_TRANSCRIPT)
+    contradicted = score_attempt(
+        task,
+        context,
+        recorded(step(1, ["h1", "h2", "h3"], performed="c1"), arm_id="compacted-transcript-v1"),
+    )
+
+    assert context.delivered_fact_ids == ("h1", "h2")
+    assert contradicted.steps[0].undelivered_reliance == ("h3",)
+    assert contradicted.steps[0].is_recovery is False
+    assert contradicted.task_success is False
+    assert contradicted.missing_evidence == 1
+
+    honest = score_attempt(
+        task,
+        context,
+        recorded(step(1, ["h1", "h2"], performed="c1"), arm_id="compacted-transcript-v1"),
+    )
+    assert honest.steps[0].is_recovery is True
+    assert honest.task_success is True
+
+
 def test_a_recorded_correction_counts_toward_the_user_correction_burden(catalog: TaskCatalog) -> None:
     context = context_for(catalog, "t-audit", FULL_TRANSCRIPT)
     attempt = recorded(step(1, ["h1"], correction=True), step(2, ["h1", "h2"], performed="c1"))

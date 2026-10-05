@@ -41,6 +41,7 @@ from powercontext_eval.benchmarks.work_continuity.analysis import (
     analyse_task_outcomes,
     analyse_work_continuity,
     classify_failure,
+    facts_lost_to_the_budget,
 )
 from powercontext_eval.benchmarks.work_continuity.arms import (
     COMPACTED_TRANSCRIPT,
@@ -263,6 +264,55 @@ def test_delivering_every_fact_without_recovery_is_a_vague_next_action(catalog: 
 
     assert score.task_success is False
     assert (score.incorrect_assumptions, score.missing_evidence, score.unverifiable_claims) == (0, 0, 0)
+    assert classify_failure(task, context, score) == VAGUE_NEXT_ACTION
+
+
+def test_a_ceiling_that_drops_only_the_next_action_is_budget_truncation(catalog: TaskCatalog) -> None:
+    """A ceiling that stops before the action removes the action, not its facts.
+
+    Every fact the next action depends on survives this ceiling, so a classifier
+    that only subtracts dropped facts from the needed set finds nothing missing and
+    reports a vague action — recommending a contract change for a loss the byte
+    ceiling caused, while the quality table already flags the missing next action.
+    """
+
+    task = catalog.require("t-audit")
+    ceiling = budget_through(task, ROLLOVER_HANDOFF, "label:next_action")
+    context = context_for(catalog, "t-audit", ROLLOVER_HANDOFF, max_bytes=ceiling)
+    score = score_attempt(task, context, recorded(step(1, ["h1", "h2"]), arm_id=ROLLOVER_HANDOFF.arm_id))
+
+    assert "next_action" in context.dropped_item_ids
+    assert context.next_action_lost_to_the_budget is True
+    assert context.carries_next_action is False
+    # Nothing the action depends on was lost, which is exactly why the fact-only
+    # reading of the budget fell through to the vague-action fallback.
+    assert context.delivered_fact_ids == ("h1", "h2", "h3")
+    assert facts_lost_to_the_budget(task, context) == set()
+    assert context.quality is not None
+    assert NEXT_ACTION_REQUIREMENT in context.quality.violations_by_requirement
+    assert classify_failure(task, context, score) == BUDGET_TRUNCATION
+
+    analysis = analyse_task_outcomes(
+        task,
+        [ArmOutcome(task.task_id, ROLLOVER_HANDOFF.arm_id, HOST_A, context, score)],
+    )
+    assert "the next action itself" in analysis.findings[0].detail
+
+
+def test_a_ceiling_that_keeps_the_next_action_leaves_the_outcome_to_the_session(catalog: TaskCatalog) -> None:
+    """The added carrier must not swallow failures the ceiling did not cause.
+
+    The same context one byte above the cut keeps the next action, so the session
+    that read every fact and still did not continue is a vague action again.
+    """
+
+    task = catalog.require("t-audit")
+    ceiling = budget_through(task, ROLLOVER_HANDOFF, "next_action")
+    context = context_for(catalog, "t-audit", ROLLOVER_HANDOFF, max_bytes=ceiling)
+    score = score_attempt(task, context, recorded(step(1, ["h1", "h2"]), arm_id=ROLLOVER_HANDOFF.arm_id))
+
+    assert context.next_action_lost_to_the_budget is False
+    assert context.carries_next_action is True
     assert classify_failure(task, context, score) == VAGUE_NEXT_ACTION
 
 

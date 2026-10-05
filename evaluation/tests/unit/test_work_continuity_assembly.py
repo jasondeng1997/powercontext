@@ -39,6 +39,8 @@ from powercontext_eval.benchmarks.work_continuity.assembly import (
     OMISSIONS_LABEL,
     STATE_LABEL,
     TRANSCRIPT_LABEL,
+    AssembledItem,
+    _fit,
     assemble_context,
 )
 from powercontext_eval.benchmarks.work_continuity.catalog import ContinuationTask, TaskCatalog
@@ -204,13 +206,47 @@ def test_a_ceiling_smaller_than_one_item_still_produces_a_measurable_context(aud
 
 
 def test_the_cut_lands_on_a_utf8_boundary(audit: ContinuationTask) -> None:
-    """A partial multi-byte character must not be counted as delivered bytes."""
+    """A partial multi-byte character must not be counted as delivered bytes.
+
+    Only the first item survives a ceiling this tight, and every arm's first item is
+    ASCII, so this sweep accounts for the delivered bytes without ever splitting a
+    character; the split itself is driven directly below, where it is reachable.
+    """
 
     for ceiling in range(1, 200):
         context = assemble_context(audit, ROLLOVER_HANDOFF, max_bytes=ceiling)
         assert context.injected_bytes == len(context.text.encode("utf-8"))
-        assert context.text == context.text.encode("utf-8").decode("utf-8")
         assert context.injected_bytes <= ceiling
+
+
+def test_a_multibyte_item_is_cut_on_a_character_boundary() -> None:
+    """The byte cut never delivers half a character, and it does land mid-character.
+
+    `_fit` cuts the last surviving item, so a ceiling can fall inside a character.
+    The text is multi-byte on purpose: with ASCII the sweep passes whatever the cut
+    does, which is why the boundary rule needs a payload that straddles it.
+    """
+
+    text = "- 把重试基数改成 1 秒，并保留完整抖动（jitter）"
+    encoded = text.encode("utf-8")
+    assert len(encoded) > len(text)  # the payload really is multi-byte
+
+    mid_character_cuts = 0
+    for ceiling in range(1, len(encoded)):
+        kept, dropped, delivered, truncated = _fit((AssembledItem("objective", "objective", text),), max_bytes=ceiling)
+
+        assert truncated is True
+        assert dropped == []
+        assert kept[0].text == text
+        # A prefix of the payload, never a fragment that was re-decoded into
+        # something else, and never more bytes than the ceiling allowed.
+        assert encoded.startswith(delivered.encode("utf-8"))
+        assert "\ufffd" not in delivered
+        assert len(delivered.encode("utf-8")) <= ceiling
+        if len(delivered.encode("utf-8")) < ceiling:
+            mid_character_cuts += 1
+
+    assert mid_character_cuts > 0
 
 
 def test_assembly_is_deterministic(audit: ContinuationTask) -> None:

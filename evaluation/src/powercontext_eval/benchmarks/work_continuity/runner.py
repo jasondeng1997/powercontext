@@ -594,12 +594,16 @@ def _quality_block(contexts: Sequence[ContinuationContext]) -> dict[str, object]
 
     Truncation must not be able to certify an unusable context, so the delivered
     counts are the headline and the draft counts are reported next to them rather
-    than in place of them.
+    than in place of them. A method that carries no Handoff draft at all has
+    nothing to check rather than a checked total of zero, so the block says which
+    of the two it is: ``0 of 0 satisfied`` would otherwise read as a measured
+    failure as easily as it reads as an absent question.
     """
 
     delivered = [context.quality for context in contexts if context.quality is not None]
     drafts = [context.draft_quality for context in contexts if context.draft_quality is not None]
     return {
+        "applicable": bool(delivered),
         "checked_task_count": len(delivered),
         "satisfied_task_count": sum(1 for report in delivered if report.satisfied),
         "draft_checked_task_count": len(drafts),
