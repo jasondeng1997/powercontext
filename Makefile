@@ -46,6 +46,11 @@ unit-test: ## Run tests that do not cross the Server boundary end to end.
 e2e-test: ## Run CLI to Client SDK to Server end-to-end tests.
 	@uv run python -m pytest tests/e2e
 
+.PHONY: evaluation-unit-test
+evaluation-unit-test: ## Run the evaluation project's unit tests, the work-continuity benchmark included.
+	@uv sync --project evaluation --frozen
+	@uv run --project evaluation pytest -c evaluation/pyproject.toml evaluation/tests/unit -m "not live" -q
+
 .PHONY: code-seekdb-test
 code-seekdb-test: ## Exercise native code indexing against a real embedded seekdb instance.
 	@uv sync --locked --extra seekdb --extra code
