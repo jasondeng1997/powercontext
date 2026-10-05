@@ -85,7 +85,33 @@ jobs:
       # unrelated to the benchmark, and gating them here would make this check
       # red before it could report anything.
       - name: Run the evaluation project unit tests
-        run: make evaluation-unit-test
+        run: |
+          set -o pipefail
+          make evaluation-unit-test 2>&1 | tee evaluation/pytest.log
+
+      # A pull request from a fork cannot read this run's raw job log, so a red
+      # check has to name what failed somewhere the contributor can see it;
+      # otherwise a failure here is an exit code and nothing else. The tail is
+      # kept for the case that matters most — a run that never reached the tests,
+      # where the summary has no failing case to list.
+      - name: Report the failing cases
+        if: failure()
+        run: |
+          {
+            echo "### evaluation unit tests"
+            echo
+            if grep -qE '^(FAILED|ERROR) ' evaluation/pytest.log; then
+              echo '```'
+              grep -E '^(FAILED|ERROR) ' evaluation/pytest.log
+              echo '```'
+            else
+              echo "No failing case was reported, so the run failed before the tests ran:"
+              echo
+              echo '```'
+              tail -n 40 evaluation/pytest.log
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
   code-seekdb:
     timeout-minutes: 20
