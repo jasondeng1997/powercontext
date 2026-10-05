@@ -126,7 +126,20 @@ def test_validate_also_checks_recorded_attempts(tmp_path: Path) -> None:
             "host_revision": f"{HOST}@1",
             "model": "declared-model",
             "attempt_count": 8,
-            "tasks": {"t-audit": 4, "t-doc": 4},
+            "tasks": {
+                "t-audit": {
+                    "compacted-transcript-v1": 1,
+                    "full-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+                "t-doc": {
+                    "compacted-transcript-v1": 1,
+                    "full-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+            },
         }
     ]
 

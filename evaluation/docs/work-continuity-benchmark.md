@@ -50,8 +50,9 @@ part of it is the model and host revision that produced the recordings, **and ho
 recordings were allocated between them**: a run that put model A on one host and model B on
 nine is not comparable to one that reversed that split, because the mix alone moves the success
 counts while both runs list the same two models. A manifest whose execution configuration
-cannot show its allocation — a missing block, a missing attempt count, a non-positive count —
-is refused rather than assumed equal.
+cannot show its allocation — a missing block, a missing attempt count, a non-positive count, or
+a task entry that is a bare count rather than a per-method one — is refused rather than assumed
+equal.
 
 ## Task set and ground truth
 
@@ -148,11 +149,14 @@ Comparisons are scoped per host *and* per execution configuration. A baseline re
 host can never "beat" the treatment recorded on another, because that comparison would
 describe two different integrations rather than two continuation methods; and two runs whose
 hosts report different models, host revisions, or configuration allocations are refused
-outright. The allocation is compared per task, not only in total: a run that sent
-`wc-coding-0001` to model A and `wc-coding-0002` to model B is not comparable with one that
+outright. The allocation is compared per task *and* per method, not only in total: a run that
+sent `wc-coding-0001` to model A and `wc-coding-0002` to model B is not comparable with one that
 swapped them, because a task is scored against its own declared next action, so that swap alone
-moves the success counts. Host *names* stay outside the comparison, so renaming a host does not
-make two runs incomparable.
+moves the success counts. The same holds for the arm, which is the unit the benchmark actually
+scores: a run that ran `full-transcript-v1` on model A and `rollover-handoff-v1` on model B is
+not comparable with one that swapped *those* assignments, because the per-arm successes flip
+with the swap while the per-task totals hide it. Host *names* stay outside the comparison, so
+renaming a host does not make two runs incomparable.
 
 Recording coverage and comparison coverage are separate states, and the unit of comparison is
 one task on one host. A run can record every selected task and method and still hold no

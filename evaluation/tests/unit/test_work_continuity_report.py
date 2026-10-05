@@ -277,16 +277,35 @@ def test_the_report_renders_the_recorded_execution_configuration(recorded: WorkC
             "host_revision": f"{HOST}@1",
             "model": "declared-model",
             "attempt_count": 8,
-            "tasks": {"t-audit": 4, "t-doc": 4},
+            "tasks": {
+                "t-audit": {
+                    "compacted-transcript-v1": 1,
+                    "full-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+                "t-doc": {
+                    "compacted-transcript-v1": 1,
+                    "full-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+            },
         }
     ]
     markdown = render_markdown(payload)
     assert "## Recorded execution configuration" in markdown
     assert "declared-model" in markdown
-    # The share of the recordings and the per-task split are rendered too, because
-    # the comparison gate weighs a configuration by them rather than only noticing
-    # that it appears somewhere.
-    assert "| `fixture-host` | `fixture-host@1` | `declared-model` | 8 | `t-audit` x4, `t-doc` x4 |" in markdown
+    # The share of the recordings and the per-task, per-method split are rendered
+    # too, because the comparison gate weighs a configuration by which task under
+    # which method it recorded rather than only noticing that it appears somewhere.
+    assert (
+        "| `fixture-host` | `fixture-host@1` | `declared-model` | 8 | "
+        "`t-audit` `compacted-transcript-v1` x1, `full-transcript-v1` x1, `informal-summary-v1` x1, "
+        "`rollover-handoff-v1` x1; "
+        "`t-doc` `compacted-transcript-v1` x1, `full-transcript-v1` x1, `informal-summary-v1` x1, "
+        "`rollover-handoff-v1` x1 |" in markdown
+    )
 
 
 def test_a_recording_without_the_treatment_reports_no_comparison(tmp_path: Path) -> None:

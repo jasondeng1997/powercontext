@@ -438,30 +438,32 @@ def execution_configuration(attempts: AttemptSet | None) -> list[dict[str, objec
     reader can see which model and host revision produced the outcomes and can
     tell a method difference from a configuration difference. Each entry also
     carries how many recordings that host contributed and how those recordings
-    were distributed over the tasks, because the comparison gate has to weigh a
-    configuration by its share of the outcomes *per task*: two runs can agree on
-    the hosts, the models, the host revisions and the totals while assigning the
-    two tasks to the two models the other way round, and with task-specific model
-    behaviour that swap alone moves the success counts.
+    were distributed over the tasks *and the methods*: the comparison gate has to
+    weigh a configuration by its share of the outcomes at the unit this benchmark
+    scores — one task under one method. Two runs can agree on the hosts, the
+    models, the host revisions, the tasks and the totals while running a method on
+    the other model, and with method-specific model behaviour that swap alone
+    moves the per-arm success counts. A per-host per-task total cannot see that
+    swap, because it merges the attempts every method made on that task.
     """
 
     if attempts is None:
         return []
     by_host: dict[str, tuple[str, str]] = {}
     counts: dict[str, int] = {}
-    by_task: dict[str, dict[str, int]] = {}
+    by_task: dict[str, dict[str, dict[str, int]]] = {}
     for attempt in attempts.attempts:
         by_host.setdefault(attempt.host, attempt.configuration)
         counts[attempt.host] = counts.get(attempt.host, 0) + 1
-        per_task = by_task.setdefault(attempt.host, {})
-        per_task[attempt.task_id] = per_task.get(attempt.task_id, 0) + 1
+        per_arm = by_task.setdefault(attempt.host, {}).setdefault(attempt.task_id, {})
+        per_arm[attempt.arm_id] = per_arm.get(attempt.arm_id, 0) + 1
     return [
         {
             "host": host,
             "host_revision": configuration[0],
             "model": configuration[1],
             "attempt_count": counts[host],
-            "tasks": dict(sorted(by_task[host].items())),
+            "tasks": {task_id: dict(sorted(per_arm.items())) for task_id, per_arm in sorted(by_task[host].items())},
         }
         for host, configuration in sorted(by_host.items())
     ]

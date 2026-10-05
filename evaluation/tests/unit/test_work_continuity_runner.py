@@ -42,6 +42,8 @@ from powercontext_eval.benchmarks.work_continuity.arms import (
     FULL_TRANSCRIPT,
     INFORMAL_SUMMARY,
     ROLLOVER_HANDOFF,
+    ContinuationArmError,
+    ensure_comparable_work_continuity_runs,
     supported_continuation_arm_ids,
 )
 from powercontext_eval.benchmarks.work_continuity.catalog import TaskCatalog
@@ -189,7 +191,7 @@ def test_the_manifest_pins_every_input_a_reader_needs_to_reproduce_the_run(lock:
 
 
 def test_the_run_retains_each_recorded_hosts_execution_configuration(lock: Path, attempts: Path) -> None:
-    """The configuration, its share, and its per-task split are kept, not only validated."""
+    """The configuration, its share, and its per-task, per-method split are kept, not only validated."""
 
     expected = [
         {
@@ -197,12 +199,140 @@ def test_the_run_retains_each_recorded_hosts_execution_configuration(lock: Path,
             "host_revision": f"{HOST}@1",
             "model": "declared-model",
             "attempt_count": 8,
-            "tasks": {"t-audit": 4, "t-doc": 4},
+            "tasks": {
+                "t-audit": {
+                    "full-transcript-v1": 1,
+                    "compacted-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+                "t-doc": {
+                    "full-transcript-v1": 1,
+                    "compacted-transcript-v1": 1,
+                    "informal-summary-v1": 1,
+                    "rollover-handoff-v1": 1,
+                },
+            },
         },
     ]
 
     assert recorded_run(lock, attempts).manifest["execution_configuration"] == expected
     assert run_summary(recorded_run(lock, attempts))["execution_configuration"] == expected
+
+
+def host_attempt(lock: Path, task_id: str, arm_id: str, *, host: str, model: str) -> dict[str, Any]:
+    """A recording made on one named host under one named model."""
+
+    return {
+        "task_id": task_id,
+        "arm_id": arm_id,
+        "host": host,
+        "host_revision": "runtime-1",
+        "model": model,
+        "context_sha256": context_digest(lock, task_id, arm_id),
+        "steps": [step(1, ["h1", "h2"], performed="c1")],
+    }
+
+
+def two_arm_run(lock: Path, directory: Path, entries: list[dict[str, Any]]) -> WorkContinuityRun:
+    """Run the shipped paired comparison for one task, from a run-generated manifest.
+
+    The PowerContext and integration revisions are pinned, because the comparison
+    gate treats them as part of the protocol and refuses a run that leaves them
+    unset.
+    """
+
+    directory.mkdir()
+    return run_work_continuity(
+        task_lock=lock,
+        run_id=directory.name,
+        arm_ids=(FULL_TRANSCRIPT.arm_id, ROLLOVER_HANDOFF.arm_id),
+        task_ids=("t-audit",),
+        attempts_path=write_attempts(directory, entries, lock=lock),
+        powercontext_revision="rev-powercontext",
+        integration_revision="rev-integration",
+    )
+
+
+def test_run_generated_manifests_that_swap_a_method_between_models_are_not_comparable(
+    lock: Path, tmp_path: Path
+) -> None:
+    """The reproduction from review, on the manifests a run actually writes.
+
+    Both runs record the same task under the same two methods on the same two
+    hosts, with unchanged models, revisions and per-task totals. The first ran the
+    baseline on `model-a` and the treatment on `model-b`; the second swapped those
+    assignments. With method-specific model behaviour that swap alone flips the
+    per-arm successes, and the per-task totals cannot see it — each task total
+    merges the attempts of both methods — so the gate has to read the method
+    dimension of the allocation rather than the task total.
+    """
+
+    baseline_on_a = two_arm_run(
+        lock,
+        tmp_path / "baseline-on-a",
+        [
+            host_attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, host="host-a", model="model-a"),
+            host_attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, host="host-b", model="model-b"),
+        ],
+    )
+    treatment_on_a = two_arm_run(
+        lock,
+        tmp_path / "treatment-on-a",
+        [
+            host_attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, host="host-a", model="model-b"),
+            host_attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, host="host-b", model="model-a"),
+        ],
+    )
+
+    # Nothing else distinguishes them: same hosts, same models, same revisions, and
+    # the same number of recordings per task on each side.
+    assert [entry["model"] for entry in baseline_on_a.manifest["execution_configuration"]] == ["model-a", "model-b"]
+    assert [entry["tasks"] for entry in baseline_on_a.manifest["execution_configuration"]] == [
+        {"t-audit": {FULL_TRANSCRIPT.arm_id: 1}},
+        {"t-audit": {ROLLOVER_HANDOFF.arm_id: 1}},
+    ]
+    assert [
+        sum(count for arms in entry["tasks"].values() for count in arms.values())
+        for entry in baseline_on_a.manifest["execution_configuration"]
+    ] == [
+        sum(count for arms in entry["tasks"].values() for count in arms.values())
+        for entry in treatment_on_a.manifest["execution_configuration"]
+    ]
+
+    with pytest.raises(ContinuationArmError, match="execution_configuration allocation") as error:
+        ensure_comparable_work_continuity_runs(baseline_on_a.manifest, treatment_on_a.manifest)
+
+    message = str(error.value)
+    assert f"runtime-1/model-a (t-audit/{FULL_TRANSCRIPT.arm_id} x1)" in message
+    assert f"runtime-1/model-a (t-audit/{ROLLOVER_HANDOFF.arm_id} x1)" in message
+
+
+def test_run_generated_manifests_that_keep_the_method_allocation_are_comparable(lock: Path, tmp_path: Path) -> None:
+    """The same method allocation under renamed hosts stays comparable.
+
+    Host names are a declared dimension of this benchmark, so renaming one must not
+    make two otherwise identical runs incomparable.
+    """
+
+    first = two_arm_run(
+        lock,
+        tmp_path / "first",
+        [
+            host_attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, host="host-a", model="model-a"),
+            host_attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, host="host-b", model="model-b"),
+        ],
+    )
+    renamed = two_arm_run(
+        lock,
+        tmp_path / "renamed",
+        [
+            host_attempt(lock, "t-audit", FULL_TRANSCRIPT.arm_id, host="integration-one", model="model-a"),
+            host_attempt(lock, "t-audit", ROLLOVER_HANDOFF.arm_id, host="integration-two", model="model-b"),
+        ],
+    )
+
+    ensure_comparable_work_continuity_runs(first.manifest, renamed.manifest)
 
 
 def test_the_summary_states_whether_a_comparison_was_actually_held(lock: Path, attempts: Path) -> None:

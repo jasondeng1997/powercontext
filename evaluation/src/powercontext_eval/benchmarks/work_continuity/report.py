@@ -125,11 +125,12 @@ def render_markdown(payload: dict[str, object]) -> str:
                     "The model and host revision that produced each host's recordings. Outcomes are only compared "
                     "within one task on one host, and a host that reports two configurations is rejected before "
                     "scoring, so a configuration difference cannot be read as a method difference. The recordings "
-                    "each host contributed are shown per task, because the comparison gate weighs a configuration "
-                    "by which task it recorded and how many times, not only by whether it appears somewhere."
+                    "each host contributed are shown per task and per method, because the comparison gate weighs a "
+                    "configuration by which task under which method it recorded and how many times, not only by "
+                    "whether it appears somewhere."
                 ),
                 "",
-                "| Host | Host revision | Model | Recorded attempts | Recorded tasks |",
+                "| Host | Host revision | Model | Recorded attempts | Recorded tasks and methods |",
                 "| --- | --- | --- | ---: | --- |",
             ]
         )
@@ -518,13 +519,26 @@ def _inline_counts(counts: object) -> str:
 
 
 def _task_allocation(tasks: object) -> str:
-    """Render one host's per-task recording counts for the configuration table."""
+    """Render one host's per-task, per-method recording counts for the configuration table.
+
+    The table has to show the unit the comparison gate compares — one task under
+    one method — so a per-task total is not enough: two runs can agree on every
+    task total while running the same method under the other model.
+    """
 
     if not isinstance(tasks, dict):
         raise ReportError("report payload execution_configuration[].tasks must be an object")
     if not tasks:
         return "none"
-    return ", ".join(f"`{task_id}` x{count}" for task_id, count in sorted(tasks.items()))
+    rendered: list[str] = []
+    for task_id, arms in sorted(tasks.items()):
+        if not isinstance(arms, dict):
+            raise ReportError("report payload execution_configuration[].tasks[].methods must be an object")
+        if not arms:
+            continue
+        recorded = ", ".join(f"`{arm_id}` x{count}" for arm_id, count in sorted(arms.items()))
+        rendered.append(f"`{task_id}` {recorded}")
+    return "; ".join(rendered) or "none"
 
 
 def _analysis_available(failure: dict[str, object]) -> bool:
