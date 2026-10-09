@@ -277,7 +277,7 @@ async def ingest_dataset(
     conversation_results: dict[str, dict[str, Any]] = {}
 
     async with open_builtin_runtime(config) as runtime:
-        scopes = await _registered_scopes(runtime, conversations, run_id)
+        scopes = await _register_scopes(runtime, conversations, run_id)
 
         async def ingest_conversation(conversation: LoCoMoConversation) -> None:
             nonlocal completed_sessions, resumed_sessions, transient_retries, unchanged_flushes
@@ -437,6 +437,15 @@ async def evaluate_dataset(  # noqa: C901
         semaphore = asyncio.Semaphore(concurrency)
         async with AsyncExitStack() as resources:
             runtime = await resources.enter_async_context(open_builtin_runtime(config))
+            # Resolve the Scopes ingestion registered before any inference is set up, so an
+            # evaluation against a database that never ingested this run fails here rather than
+            # scoring empty retrieval and spending answer and judge requests on it.
+            scopes = await _required_scopes(
+                runtime,
+                _selected_conversations(dataset, conversation_limit),
+                _ingested_scopes(output_directory),
+            )
+            entry_sources = await _entry_source_maps(runtime, scopes, dataset, conversation_limit)
             model = await resources.enter_async_context(infer_model(generation_model))
             answer_generator = PydanticAIStructuredGenerator(
                 model=model,
@@ -466,8 +475,6 @@ async def evaluate_dataset(  # noqa: C901
                 limits=limits,
                 model_settings=_benchmark_model_settings(),
             )
-            scopes = await _registered_scopes(runtime, _selected_conversations(dataset, conversation_limit), run_id)
-            entry_sources = await _entry_source_maps(runtime, scopes, dataset, conversation_limit)
 
             async def evaluate_one(question: LoCoMoQuestion) -> dict[str, Any]:
                 async with semaphore:
@@ -1225,6 +1232,7 @@ async def _retry_transient(action: Callable[[], Awaitable[ResultT]], *, attempts
 
 SCOPE_TITLE = "LoCoMo conversation"
 SCOPE_SUMMARY = "Isolated conversation evidence for a reproducible local evaluation."
+INGESTION_REPORT_SCHEMA = "powercontext.benchmark.locomo.ingestion.v1"
 
 
 def _selected_conversations(dataset: LoCoMoDataset, conversation_limit: int | None) -> tuple[LoCoMoConversation, ...]:
@@ -1233,22 +1241,27 @@ def _selected_conversations(dataset: LoCoMoDataset, conversation_limit: int | No
     return dataset.conversations[:conversation_limit]
 
 
-async def _registered_scopes(
+def _scope_registry(runtime):
+    registry = runtime.scopes
+    if registry is None:
+        raise RuntimeError("the LoCoMo benchmark requires the Scope registry")  # noqa: TRY003
+    return registry
+
+
+async def _register_scopes(
     runtime,
     conversations: Sequence[LoCoMoConversation],
     run_id: str,
 ) -> dict[str, str]:
-    """Return the registered Scope that owns each conversation's evidence.
+    """Register the Scope that owns each conversation's evidence, and return its registry id.
 
     The Scope registry assigns Scope ids, so a name the runner derives by itself can never be
     resolved: both `sources.for_scope()` and `memory.for_scope()` look the id up. Registering
-    under a stable idempotency key makes one Scope resolvable by ingestion and by a later
-    evaluation, which is what `--skip-ingestion` relies on, instead of minting a second one.
+    under a stable idempotency key makes the Scope returned here the one every later phase of the
+    same run resolves, instead of minting a second one per phase.
     """
 
-    registry = runtime.scopes
-    if registry is None:
-        raise RuntimeError("the LoCoMo benchmark requires the Scope registry")  # noqa: TRY003
+    registry = _scope_registry(runtime)
     registered: dict[str, str] = {}
     for conversation in conversations:
         descriptor = await registry.create(
@@ -1260,6 +1273,49 @@ async def _registered_scopes(
         )
         registered[conversation.sample_id] = descriptor.scope_id
     return registered
+
+
+def _ingested_scopes(output_directory: Path) -> dict[str, str]:
+    """Return the Scope id ingestion recorded for each conversation of this run."""
+
+    report_path = output_directory / "ingestion.json"
+    if not report_path.is_file():
+        raise FileNotFoundError(f"ingestion report is missing: {report_path}")  # noqa: TRY003
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("schema") != INGESTION_REPORT_SCHEMA:
+        raise ValueError(f"unsupported ingestion report schema: {report.get('schema')}")  # noqa: TRY003
+    recorded: dict[str, str] = {}
+    for sample_id, entry in report.get("conversations", {}).items():
+        scope = entry.get("scope_id")
+        if isinstance(scope, str) and scope:
+            recorded[sample_id] = scope
+    return recorded
+
+
+async def _required_scopes(
+    runtime,
+    conversations: Sequence[LoCoMoConversation],
+    recorded: Mapping[str, str],
+) -> dict[str, str]:
+    """Resolve the Scopes ingestion registered; never register a replacement for a missing one.
+
+    Evaluation must not create Scopes. On a database that never ingested this run, registering
+    would mint an empty Scope, score empty retrieval as a valid observation, and spend answer and
+    judge requests on a configuration mistake - and those observations would then be skipped on
+    resume. Resolving the recorded id fails before any inference instead.
+    """
+
+    registry = _scope_registry(runtime)
+    resolved: dict[str, str] = {}
+    for conversation in conversations:
+        recorded_scope = recorded.get(conversation.sample_id)
+        if recorded_scope is None:
+            raise ValueError(  # noqa: TRY003
+                f"ingestion recorded no Scope for conversation {conversation.sample_id}; ingest this run before evaluating it"
+            )
+        await registry.get(recorded_scope)
+        resolved[conversation.sample_id] = recorded_scope
+    return resolved
 
 
 def scope_id(run_id: str, sample_id: str) -> str:
