@@ -14,12 +14,23 @@
 
 """Focused tests for the deterministic LoCoMo benchmark boundary."""
 
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from benchmark.locomo.dataset import load_locomo, render_session
+from benchmark.locomo import runner
+from benchmark.locomo.dataset import (
+    LoCoMoConversation,
+    LoCoMoDataset,
+    LoCoMoSession,
+    LoCoMoTurn,
+    load_locomo,
+    render_session,
+)
 from benchmark.locomo.metrics import (
     bleu1,
     diagnose_observations,
@@ -35,8 +46,17 @@ from benchmark.locomo.runner import (
     prepare_run,
     scope_id,
 )
+from powercontext.builtin.artifacts.memory import EmbeddingProfile, MemoryCandidateRequest, MemoryEntryInput
+from powercontext.builtin.inference import EmbeddingResult
 from powercontext.builtin.persistence.sqlite import SQLiteConfig
-from powercontext.builtin.runtime import InferenceConfig, MemoryExtractionProfile, RuntimeConfig
+from powercontext.builtin.runtime import (
+    BuiltinConfig,
+    InferenceConfig,
+    MemoryExtractionProfile,
+    RuntimeConfig,
+    open_builtin_runtime,
+)
+from powercontext.builtin.sources import ContentSource
 from powercontext.server.settings import ServerSettings
 
 DATASET = Path(__file__).parents[2] / "benchmark" / "locomo" / "dataset" / "locomo10.json"
@@ -372,3 +392,101 @@ def test_rejudge_manifest_freezes_answers_and_records_independent_judge(tmp_path
             run_id="qwen topical judge",
             judge_model="openai:different-judge",
         )
+
+
+class _CandidatePipeline:
+    """Deterministic in-process stand-in for the configured extraction pipeline."""
+
+    async def extract(self, request: MemoryCandidateRequest, /) -> tuple[MemoryEntryInput, ...]:
+        return tuple(
+            MemoryEntryInput(kind="fact", text=source.content, sources=(source,), reason="recorded dialogue")
+            for source in request.sources
+            if isinstance(source, ContentSource)
+        )
+
+
+class _EmbeddingModel:
+    """Deterministic in-process stand-in for the configured embedding profile."""
+
+    profile = EmbeddingProfile(
+        profile_id="locomo-test", model="deterministic", dimension=3, distance="l2", normalization="unit"
+    )
+
+    async def embed(self, texts: tuple[str, ...], /) -> EmbeddingResult:
+        return EmbeddingResult(vectors=tuple((1.0, 0.0, 0.0) for _ in texts))
+
+
+def _use_offline_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Open the runtime with extraction and embeddings that never leave this process."""
+
+    @asynccontextmanager
+    async def runtime_factory(config: BuiltinConfig):
+        offline = config.model_copy(update={"inference": InferenceConfig()})
+        async with open_builtin_runtime(
+            offline,
+            scheduler_path=tmp_path / "scheduler.db",
+            candidate_pipeline=_CandidatePipeline(),
+            embedding_model=_EmbeddingModel(),
+        ) as runtime:
+            yield runtime
+
+    monkeypatch.setattr(runner, "open_builtin_runtime", runtime_factory)
+
+
+def _synthetic_conversation(sample_id: str) -> LoCoMoConversation:
+    return LoCoMoConversation(
+        sample_id,
+        "Alice",
+        "Bob",
+        (LoCoMoSession("D1", 1, "1:56 pm on 8 May, 2023", (LoCoMoTurn("D1:1", "Alice", "I bought a book."),)),),
+        (),
+    )
+
+
+def test_ingestion_registers_the_scopes_a_later_phase_must_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression test for #1778: the runner captures into Scopes nothing ever registered.
+
+    The Scope registry assigns Scope ids, so a name the runner derives by itself resolves
+    nowhere and the first `capture` fails with ScopeNotFoundError. Ingestion has to register
+    each conversation's Scope, and a later phase has to resolve that same Scope rather than
+    mint a second one.
+    """
+
+    _use_offline_runtime(monkeypatch, tmp_path)
+    dataset = LoCoMoDataset(
+        path=DATASET,
+        sha256="0" * 64,
+        conversations=(_synthetic_conversation("conv-26"), _synthetic_conversation("conv-27")),
+    )
+    settings = ServerSettings(
+        database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'locomo.db'}"),
+        inference=InferenceConfig(),
+    )
+
+    def ingest() -> dict[str, Any]:
+        return asyncio.run(
+            runner.ingest_dataset(
+                dataset,
+                settings=settings,
+                run_id="scope-registration",
+                output_directory=tmp_path,
+                progress=lambda _message: None,
+            )
+        )
+
+    first = ingest()
+    scopes = {sample_id: entry["scope_id"] for sample_id, entry in first["conversations"].items()}
+    assert set(scopes) == {"conv-26", "conv-27"}
+    assert all(scope.startswith("scp_") for scope in scopes.values())
+    assert runner.scope_id("scope-registration", "conv-26") not in scopes.values()
+    assert first["resumed_session_count"] == 0
+    assert first["newly_processed_session_count"] == 2
+
+    # The same run resolves to the same Scopes, so a later evaluation resumes the ingested
+    # sessions instead of capturing them again under freshly minted Scopes.
+    second = ingest()
+    assert {entry["scope_id"] for entry in second["conversations"].values()} == set(scopes.values())
+    assert second["resumed_session_count"] == 2
+    assert second["newly_processed_session_count"] == 0

@@ -42,6 +42,7 @@ from powercontext.builtin.artifacts.memory import (
 from powercontext.builtin.inference.errors import InferenceTimeoutError, InferenceUnavailableError
 from powercontext.builtin.inference.pydantic_ai import InferenceLimits, PydanticAIStructuredGenerator
 from powercontext.builtin.runtime import BuiltinConfig, CaptureSource, SearchMemoryRequest, open_builtin_runtime
+from powercontext.builtin.scope import ScopeDraft
 from powercontext.server.settings import ServerSettings
 
 from .dataset import LoCoMoConversation, LoCoMoDataset, LoCoMoQuestion, load_locomo, render_session
@@ -263,7 +264,7 @@ async def ingest_dataset(
         raise ValueError("ingestion concurrency must be positive")  # noqa: TRY003
     if operation_retries < 1:
         raise ValueError("operation_retries must be positive")  # noqa: TRY003
-    conversations = dataset.conversations if conversation_limit is None else dataset.conversations[:conversation_limit]
+    conversations = _selected_conversations(dataset, conversation_limit)
     config = _runtime_config(settings, generation=True)
     started = perf_counter()
     total_sessions = sum(len(conversation.sessions) for conversation in conversations)
@@ -276,11 +277,12 @@ async def ingest_dataset(
     conversation_results: dict[str, dict[str, Any]] = {}
 
     async with open_builtin_runtime(config) as runtime:
+        scopes = await _registered_scopes(runtime, conversations, run_id)
 
         async def ingest_conversation(conversation: LoCoMoConversation) -> None:
             nonlocal completed_sessions, resumed_sessions, transient_retries, unchanged_flushes
             async with semaphore:
-                scope = scope_id(run_id, conversation.sample_id)
+                scope = scopes[conversation.sample_id]
                 source_app = runtime.sources.for_scope(scope)
                 memory_app = runtime.memory.for_scope(scope)
                 for session in conversation.sessions:
@@ -464,7 +466,8 @@ async def evaluate_dataset(  # noqa: C901
                 limits=limits,
                 model_settings=_benchmark_model_settings(),
             )
-            entry_sources = await _entry_source_maps(runtime, dataset, run_id, conversation_limit)
+            scopes = await _registered_scopes(runtime, _selected_conversations(dataset, conversation_limit), run_id)
+            entry_sources = await _entry_source_maps(runtime, scopes, dataset, conversation_limit)
 
             async def evaluate_one(question: LoCoMoQuestion) -> dict[str, Any]:
                 async with semaphore:
@@ -476,7 +479,7 @@ async def evaluate_dataset(  # noqa: C901
                         question=question,
                         conversation=conversation_by_id[question.sample_id],
                         entry_sources=entry_sources[question.sample_id],
-                        run_id=run_id,
+                        scope=scopes[question.sample_id],
                         top_k=top_k,
                         answer_k=selected_answer_k,
                         rerank_mode=rerank_mode,
@@ -899,7 +902,7 @@ async def _evaluate_question(
     question: LoCoMoQuestion,
     conversation: LoCoMoConversation,
     entry_sources: Mapping[tuple[str, str], tuple[str, ...]],
-    run_id: str,
+    scope: str,
     top_k: int,
     answer_k: int,
     rerank_mode: MemoryRerankMode,
@@ -911,7 +914,7 @@ async def _evaluate_question(
     try:
         search_started = perf_counter()
         result, search_retries = await _retry_transient(
-            lambda: runtime.memory.for_scope(scope_id(run_id, question.sample_id)).search(
+            lambda: runtime.memory.for_scope(scope).search(
                 SearchMemoryRequest(
                     query=question.question,
                     limit=answer_k if rerank_mode is MemoryRerankMode.LLM else top_k,
@@ -1161,11 +1164,15 @@ def _answer_source_sessions(
     )
 
 
-async def _entry_source_maps(runtime, dataset: LoCoMoDataset, run_id: str, conversation_limit: int | None):
-    conversations = dataset.conversations if conversation_limit is None else dataset.conversations[:conversation_limit]
+async def _entry_source_maps(
+    runtime,
+    scopes: Mapping[str, str],
+    dataset: LoCoMoDataset,
+    conversation_limit: int | None,
+) -> dict[str, dict[tuple[str, str], tuple[str, ...]]]:
     mappings: dict[str, dict[tuple[str, str], tuple[str, ...]]] = {}
-    for conversation in conversations:
-        page = await runtime.memory.for_scope(scope_id(run_id, conversation.sample_id)).list()
+    for conversation in _selected_conversations(dataset, conversation_limit):
+        page = await runtime.memory.for_scope(scopes[conversation.sample_id]).list()
         mappings[conversation.sample_id] = {
             (record.entry.entry_id, record.entry.entry_version_id): tuple(
                 source.source_id for source in record.entry.sources
@@ -1214,6 +1221,45 @@ async def _retry_transient(action: Callable[[], Awaitable[ResultT]], *, attempts
                 raise
             await asyncio.sleep(min(2 ** (attempt - 1), 8))
     raise AssertionError
+
+
+SCOPE_TITLE = "LoCoMo conversation"
+SCOPE_SUMMARY = "Isolated conversation evidence for a reproducible local evaluation."
+
+
+def _selected_conversations(dataset: LoCoMoDataset, conversation_limit: int | None) -> tuple[LoCoMoConversation, ...]:
+    if conversation_limit is None:
+        return dataset.conversations
+    return dataset.conversations[:conversation_limit]
+
+
+async def _registered_scopes(
+    runtime,
+    conversations: Sequence[LoCoMoConversation],
+    run_id: str,
+) -> dict[str, str]:
+    """Return the registered Scope that owns each conversation's evidence.
+
+    The Scope registry assigns Scope ids, so a name the runner derives by itself can never be
+    resolved: both `sources.for_scope()` and `memory.for_scope()` look the id up. Registering
+    under a stable idempotency key makes one Scope resolvable by ingestion and by a later
+    evaluation, which is what `--skip-ingestion` relies on, instead of minting a second one.
+    """
+
+    registry = runtime.scopes
+    if registry is None:
+        raise RuntimeError("the LoCoMo benchmark requires the Scope registry")  # noqa: TRY003
+    registered: dict[str, str] = {}
+    for conversation in conversations:
+        descriptor = await registry.create(
+            ScopeDraft(
+                title=SCOPE_TITLE,
+                summary=SCOPE_SUMMARY,
+                idempotency_key=scope_id(run_id, conversation.sample_id),
+            )
+        )
+        registered[conversation.sample_id] = descriptor.scope_id
+    return registered
 
 
 def scope_id(run_id: str, sample_id: str) -> str:
